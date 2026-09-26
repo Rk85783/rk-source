@@ -43,6 +43,18 @@ const existing = await User.findOne({ email: mail });
 if (existing) {
   console.info(`${mail} already exists as ${existing.role}, nothing to do`);
 } else {
+  if (role === "super_admin") {
+    const supers = await User.countDocuments({ role: "super_admin" });
+    if (supers > 0) {
+      console.error(
+        `a super admin already exists (${supers} found). ` +
+          "super_admin is created once by hand, not through the API.",
+      );
+      await disconnectDB();
+      process.exit(1);
+    }
+  }
+
   const user = await User.create({
     name: String(name).trim(),
     email: mail,

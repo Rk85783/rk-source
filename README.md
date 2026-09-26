@@ -8,13 +8,15 @@ A live, growing document. Decisions, setup steps, and known issues are tracked h
 
 ## Status
 
-Early scaffold. The API boots and the frontend builds, but no feature logic has been written yet.
+Early in development. Auth and per-role profiles are working end to end against a
+real database; the frontend has no auth screens yet.
 
 | Part | State |
 | --- | --- |
-| Backend API | Runs. CORS, Mongo connected, health + auth endpoints. |
-| Frontend | Builds. Tailwind active, `Home` page calls the API and shows its status. |
-| Auth | Live. Register, login, JWT, role gating. No rate limiting. |
+| Backend API | Runs. CORS, Mongo connected, health + auth + profile endpoints. |
+| Auth | Live. Signup, login, JWT, five roles, seeded super admin. No rate limiting. |
+| Profiles | Live. Four collections, one per role, strict role isolation. |
+| Frontend | Builds. Tailwind active, `Home` shows API status. No auth UI. |
 | Tailwind | Active. Imported in `index.css`, generating a real stylesheet. |
 
 ---
@@ -48,6 +50,29 @@ Early scaffold. The API boots and the frontend builds, but no feature logic has 
 
 ---
 
+## Access model
+
+| Role | How the account is created | What it can do |
+| --- | --- | --- |
+| `carrier` | Self signup | Own profile, add drivers |
+| `shipper` | Self signup | Own profile |
+| `driver` | Added by a carrier | Own profile |
+| `admin` | Created by `super_admin` | Own profile, list users |
+| `super_admin` | `npm run seed:admin` only | Login, create admins, change roles |
+
+All five roles can log in.
+
+**Self signup accepts only `carrier` and `shipper`.** Requesting `driver`,
+`admin`, or `super_admin` returns `400`. Drivers are added by a carrier; admins
+are created by a super admin; a super admin exists only if seeded by hand.
+
+**`super_admin` cannot be granted through the API at all.** Both
+`POST /api/auth/users/admins` and `PATCH /api/auth/users/:userId/role` reject it
+with `403` and point at the seed script. The seed script also refuses to create a
+second super admin, so there is exactly one.
+
+---
+
 ## Auth
 
 JWT-based authentication. Passwords are hashed with bcrypt and never stored or
@@ -55,32 +80,34 @@ returned in plaintext. Tokens are sent as `Authorization: Bearer <token>`.
 
 ### Roles
 
-| Role | Level | Meaning |
+| Role | Level | How it is obtained |
 | --- | --- | --- |
-| `carrier` | 10 | Base role, granted at signup |
-| `shipper` | 10 | Base role, granted at signup |
-| `driver` | 10 | Base role, granted at signup |
-| `admin` | 20 | Can change other users' roles |
-| `super_admin` | 30 | Can grant `super_admin` |
+| `carrier` | 10 | Self signup |
+| `shipper` | 10 | Self signup |
+| `driver` | 10 | Added by a carrier |
+| `admin` | 20 | Created by a `super_admin` |
+| `super_admin` | 30 | Seed script only |
 
 Levels live in `backend/src/config/roles.js` so role checks are never scattered
-across files.
+across files. `PUBLIC_ROLES` in that file is the single source of truth for what
+signup accepts.
 
 **Privilege escalation is blocked at signup.** `POST /api/auth/register` accepts
-only `carrier`, `shipper`, and `driver`. Requesting `admin` or `super_admin` is
-rejected with `400`. Admin roles can only be granted by an authenticated admin
-through `PATCH /api/auth/users/:userId/role`. Granting `super_admin` requires an
-existing `super_admin` — an `admin` cannot promote anyone to it.
+only `carrier` and `shipper`. Every other role returns `400`. Admin roles can
+only be created by an authenticated `super_admin`, and `super_admin` itself can
+never be granted over HTTP.
 
 ### Endpoints
 
 | Method | Path | Access | Purpose |
 | --- | --- | --- | --- |
-| `POST` | `/api/auth/register` | Public | Create an account, base roles only |
+| `POST` | `/api/auth/register` | Public | Create a `carrier` or `shipper` |
 | `POST` | `/api/auth/login` | Public | Exchange credentials for a token |
 | `GET` | `/api/auth/me` | Authenticated | Current user |
 | `PATCH` | `/api/auth/me/password` | Authenticated | Change own password |
-| `PATCH` | `/api/auth/users/:userId/role` | `admin` | Change a user's role |
+| `GET` | `/api/auth/users` | `admin` | List users, filterable by `role` |
+| `POST` | `/api/auth/users/admins` | `super_admin` | Create an admin account |
+| `PATCH` | `/api/auth/users/:userId/role` | `super_admin` | Change a user's role |
 
 ### Requests and responses
 
@@ -116,7 +143,7 @@ is ever included in a response.
 
 | Code | Meaning |
 | --- | --- |
-| `400` | Validation failed, or an admin role was requested at signup |
+| `400` | Validation failed, or a role that cannot be self-claimed was requested |
 | `401` | Missing, invalid, or expired token, or wrong credentials |
 | `403` | Authenticated but not permitted, or account disabled |
 | `409` | Email already registered |
@@ -197,6 +224,29 @@ curl -X POST http://localhost:4000/api/shippers/me \
 Sending `firstName` and `lastName` to `POST /api/auth/register` creates the
 matching profile in the same request, so a new user needs one call, not two.
 
+### Carrier adds a driver
+
+Drivers cannot self-register. A carrier creates them:
+
+```bash
+curl -X POST http://localhost:4000/api/carriers/drivers \
+  -H "Authorization: Bearer <carrier token>" \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Dee Driver","email":"dee@example.com","password":"password123"}'
+```
+
+This creates the `driver` user and a matching `DriverProfile` in one request.
+`firstName` and `lastName` are optional — they default to splitting `name`, so
+`"Dee Driver"` becomes first `Dee`, last `Driver`. A `DriverProfile` is also
+created, so the driver has a profile ready.
+
+Only a `carrier` can call this. A `shipper` receives `403`.
+
+There is deliberately **no "list my drivers" endpoint**. A carrier-to-driver
+relationship is not modelled yet, so any such endpoint would show a carrier
+every driver in the system. That needs a `carrier` reference on the driver
+profile first.
+
 ### Role isolation
 
 Each route checks that the caller's role matches the collection, strictly, with
@@ -220,14 +270,17 @@ npm run seed:admin -- super_admin "Rk Root" root@example.com 'a-strong-password'
 npm run seed:admin -- admin "Ops Admin" ops@example.com 'another-strong-password'
 ```
 
-The script is idempotent, refuses passwords under 8 characters, and never echoes
-the password. It is the only supported way to create an admin.
+The script is idempotent, refuses passwords under 8 characters, refuses to create
+a second `super_admin`, and never echoes the password. It is the only supported
+way to create an admin or a super admin.
 
 ### Known gaps
 
 - `super_admin` has no profile collection. `PROFILE_MODELS` in
   `profile.model.js` maps roles to collections, and `super_admin` is
   deliberately absent — decide whether it needs one.
+- A carrier-to-driver relationship is not modelled, so a carrier cannot see
+  their own drivers. Add a `carrier` reference to `DriverProfile` first.
 - Changing a user's role leaves their old profile behind in the previous
   collection. There is no migration step yet.
 - `User.name` and the profile's `firstName`/`lastName` overlap. Consider whether
@@ -622,10 +675,16 @@ Deliberately deferred; no UI work done. Pick up from here:
 
 ## Roadmap
 
-Rough order of work, not a commitment:
+Rough order of work, not a commitment. Done so far is struck through.
 
-1. Wire Tailwind into `index.css`
-2. CORS setup for the `/api` boundary
-3. Auth — register/login with `bcryptjs` + `jsonwebtoken`
-4. Feature work on `Home` and routing
-5. Branding pass (see above)
+1. ~~Wire Tailwind into `index.css`~~
+2. ~~CORS setup for the `/api` boundary~~
+3. ~~Auth — register, login, JWT, roles~~
+4. ~~Per-role profile collections~~
+5. Model the carrier-to-driver relationship, so a carrier can list their drivers
+6. Decide whether `super_admin` gets a profile collection
+7. Rate limiting on the auth routes (`express-rate-limit`)
+8. Token revocation, or accept that logout is client-side only
+9. Decide what `admin` should be able to do beyond logging in
+10. Frontend auth — login and register screens wired to these endpoints
+11. Branding pass (see above)

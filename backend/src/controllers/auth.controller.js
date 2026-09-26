@@ -1,59 +1,29 @@
 import bcrypt from "bcryptjs";
 import { config } from "../config/index.js";
-import {
-  isValidRole,
-  PUBLIC_ROLES,
-  ROLES,
-  isAdminRole,
-} from "../config/roles.js";
+import { isValidRole, PUBLIC_ROLES, ROLES } from "../config/roles.js";
 import { User } from "../models/user.model.js";
 import { profileModelFor } from "../models/profile.model.js";
 import { publicProfile } from "./profile.factory.js";
 import { ApiError } from "../utils/api-error.js";
 import { signToken } from "../utils/token.js";
-
-const publicUser = (user) => ({
-  id: user._id.toString(),
-  name: user.name,
-  email: user.email,
-  role: user.role,
-  createdAt: user.createdAt,
-});
-
-const normaliseEmail = (email) =>
-  String(email || "")
-    .trim()
-    .toLowerCase();
+import { createUser, normaliseEmail, publicUser } from "../utils/user.js";
 
 export const register = async (req, res, next) => {
   try {
     const { name, email, password, role } = req.body;
 
-    if (!name || String(name).trim().length < 2) {
-      throw new ApiError(400, "Name must be at least 2 characters");
-    }
-    if (!password || String(password).length < 8) {
-      throw new ApiError(400, "Password must be at least 8 characters");
-    }
-
     const requestedRole = role || "carrier";
     if (!isValidRole(requestedRole) || !PUBLIC_ROLES.includes(requestedRole)) {
       throw new ApiError(
         400,
-        `Role must be one of: ${PUBLIC_ROLES.join(", ")}. Admin roles are assigned by an administrator.`,
+        `Role must be one of: ${PUBLIC_ROLES.join(", ")}. Other roles are assigned by an administrator.`,
       );
     }
 
-    const mail = normaliseEmail(email);
-    if (await User.exists({ email: mail })) {
-      throw new ApiError(409, "Email already registered");
-    }
-
-    const hashed = await bcrypt.hash(String(password), config.bcryptRounds);
-    const user = await User.create({
-      name: String(name).trim(),
-      email: mail,
-      password: hashed,
+    const user = await createUser({
+      name,
+      email,
+      password,
       role: requestedRole,
     });
 
@@ -132,6 +102,16 @@ export const changePassword = async (req, res, next) => {
   }
 };
 
+export const createAdmin = async (req, res, next) => {
+  try {
+    const { name, email, password } = req.body;
+    const user = await createUser({ name, email, password, role: "admin" });
+    res.status(201).json({ user: publicUser(user) });
+  } catch (err) {
+    next(err);
+  }
+};
+
 export const updateRole = async (req, res, next) => {
   try {
     const { role } = req.body;
@@ -139,28 +119,56 @@ export const updateRole = async (req, res, next) => {
       throw new ApiError(400, `Role must be one of: ${ROLES.join(", ")}`);
     }
 
-    if (role === "super_admin" && req.user.role !== "super_admin") {
-      throw new ApiError(403, "Only a super admin can grant super admin");
+    if (role === "super_admin") {
+      throw new ApiError(
+        403,
+        "super_admin cannot be granted through the API. Use the seed script.",
+      );
     }
 
     const target = await User.findById(req.params.userId);
     if (!target) throw new ApiError(404, "User not found");
 
-    if (target.role === "super_admin" && req.user.role !== "super_admin") {
-      throw new ApiError(403, "Only a super admin can change a super admin");
-    }
-    if (
-      target._id.equals(req.user._id) &&
-      role !== req.user.role &&
-      !isAdminRole(req.user.role)
-    ) {
-      throw new ApiError(403, "You cannot change your own role");
+    if (target.role === "super_admin") {
+      throw new ApiError(403, "The super admin role cannot be changed");
     }
 
     target.role = role;
     await target.save();
 
     res.json({ user: publicUser(target) });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const listUsers = async (req, res, next) => {
+  try {
+    const { role, page = 1, limit = 20 } = req.query;
+
+    const filter = {};
+    if (role) {
+      if (!isValidRole(role)) {
+        throw new ApiError(400, `Role must be one of: ${ROLES.join(", ")}`);
+      }
+      filter.role = role;
+    }
+
+    const skip = (Math.max(1, Number(page)) - 1) * Number(limit);
+    const perPage = Math.min(100, Math.max(1, Number(limit)));
+
+    const [users, total] = await Promise.all([
+      User.find(filter).sort({ createdAt: -1 }).skip(skip).limit(perPage),
+      User.countDocuments(filter),
+    ]);
+
+    res.json({
+      users: users.map(publicUser),
+      page: Math.max(1, Number(page)),
+      limit: perPage,
+      total,
+      pages: Math.ceil(total / perPage),
+    });
   } catch (err) {
     next(err);
   }

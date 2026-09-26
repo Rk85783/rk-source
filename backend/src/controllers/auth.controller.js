@@ -7,6 +7,8 @@ import {
   isAdminRole,
 } from "../config/roles.js";
 import { User } from "../models/user.model.js";
+import { profileModelFor } from "../models/profile.model.js";
+import { publicProfile } from "./profile.factory.js";
 import { ApiError } from "../utils/api-error.js";
 import { signToken } from "../utils/token.js";
 
@@ -55,7 +57,26 @@ export const register = async (req, res, next) => {
       role: requestedRole,
     });
 
-    res.status(201).json({ user: publicUser(user), token: signToken(user) });
+    // A profile is created only when the client sends the profile fields, so
+    // signup stays a single step without making them mandatory.
+    let profile = null;
+    const Profile = profileModelFor(user.role);
+    const { firstName, lastName, profileImage } = req.body;
+
+    if (Profile && firstName && lastName) {
+      profile = await Profile.create({
+        user: user._id,
+        firstName: String(firstName).trim(),
+        lastName: String(lastName).trim(),
+        profileImage: profileImage ? String(profileImage).trim() : "",
+      });
+    }
+
+    res.status(201).json({
+      user: publicUser(user),
+      ...(profile && { profile: publicProfile(profile) }),
+      token: signToken(user),
+    });
   } catch (err) {
     next(err);
   }

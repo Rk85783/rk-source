@@ -8,7 +8,8 @@
     "dev": "nodemon src/server.js",
     "lint": "eslint .",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "seed:admin": "node scripts/seed-admin.mjs"
   },
   "keywords": [],
   "author": "Rohit Kumar Mahor (rk85783@gmail.com)",

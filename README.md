@@ -28,10 +28,23 @@ Early scaffold. The API boots and the frontend builds, but no feature logic has 
 | `express` | HTTP server and routing | in use |
 | `dotenv` | Loads `.env` | in use |
 | `nodemon` | Dev auto-restart | dev only |
-| `backend` | `cors` | Cross-origin requests | in use |
+| `cors` | Cross-origin requests | in use |
 | `bcryptjs` | Password hashing | in use |
 | `jsonwebtoken` | JWT auth tokens | in use |
 | `mongoose` | MongoDB ODM | in use |
+
+**Frontend** — React 19 + Vite 8
+
+| Package | Purpose |
+| --- | --- |
+| `react`, `react-dom` | UI runtime |
+| `react-router-dom` | Client-side routing |
+| `axios` | HTTP client |
+| `tailwindcss` | Styling (v4, CSS-first) |
+| `react-hot-toast` | Toast notifications |
+| `lucide-react`, `react-icons` | Icon sets |
+| `eslint` + plugins | Linting |
+| `prettier` + `prettier-plugin-tailwindcss` | Formatting and class sorting |
 
 ---
 
@@ -137,26 +150,96 @@ router.get("/me", requireAuth, me);
 router.patch("/users/:userId/role", requireAuth, authorize("admin"), updateRole);
 ```
 
+---
+
+## Profiles
+
+Each role stores its profile in its own MongoDB collection, so role-specific
+fields can be added later without touching the other roles.
+
+| Collection | Role | Route prefix |
+| --- | --- | --- |
+| `ShipperProfile` | `shipper` | `/api/shippers` |
+| `CarrierProfile` | `carrier` | `/api/carriers` |
+| `DriverProfile` | `driver` | `/api/drivers` |
+| `AdminProfile` | `admin` | `/api/admins` |
+
+All four currently share the same fields, defined once in
+`backend/src/models/profile.model.js`:
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `user` | ObjectId → `User` | required, unique, indexed |
+| `firstName` | String | required, trimmed, max 60 |
+| `lastName` | String | required, trimmed, max 60 |
+| `profileImage` | String | defaults to `""` |
+
+To give one role extra fields, edit only that role's schema in
+`profile.model.js` and add handlers to that role's controller.
+
+### Endpoints
+
+Every role has the same three, all authenticated:
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/<role>s/me` | Read own profile (`404` if none) |
+| `POST` | `/api/<role>s/me` | Create own profile (`409` if it exists) |
+| `PATCH` | `/api/<role>s/me` | Update own profile |
+
+```bash
+curl -X POST http://localhost:4000/api/shippers/me \
+  -H "Authorization: Bearer <token>" \
+  -H 'Content-Type: application/json' \
+  -d '{"firstName":"Asha","lastName":"Verma","profileImage":"https://..."}'
+```
+
+Sending `firstName` and `lastName` to `POST /api/auth/register` creates the
+matching profile in the same request, so a new user needs one call, not two.
+
+### Role isolation
+
+Each route checks that the caller's role matches the collection, strictly, with
+no bypass for `super_admin`:
+
+```
+GET /api/admins/me  with a shipper token  ->  403
+```
+
+The collection is always resolved from the authenticated user's role, never from
+request input, so a caller cannot choose which collection to write into.
+
+### Seeding the first admin
+
+Signup refuses to create `admin` and `super_admin`, so a fresh install has no
+administrator until one is seeded:
+
+```bash
+cd backend
+npm run seed:admin -- super_admin "Rk Root" root@example.com 'a-strong-password'
+npm run seed:admin -- admin "Ops Admin" ops@example.com 'another-strong-password'
+```
+
+The script is idempotent, refuses passwords under 8 characters, and never echoes
+the password. It is the only supported way to create an admin.
+
+### Known gaps
+
+- `super_admin` has no profile collection. `PROFILE_MODELS` in
+  `profile.model.js` maps roles to collections, and `super_admin` is
+  deliberately absent — decide whether it needs one.
+- Changing a user's role leaves their old profile behind in the previous
+  collection. There is no migration step yet.
+- `User.name` and the profile's `firstName`/`lastName` overlap. Consider whether
+  `User.name` should be derived from the profile instead of stored twice.
+- `profileImage` is a plain string with no upload flow or validation yet.
+
 ### Not done yet
 
 There is no rate limiting on the auth routes, so login and register are open to
 brute-force attempts. Add `express-rate-limit` before this is exposed publicly.
 Tokens are not revocable — there is no logout endpoint, because a stateless JWT
 cannot be invalidated without a blocklist.
-
-**Frontend** — React 19 + Vite 8
-
-| Package | Purpose |
-| --- | --- |
-| `react`, `react-dom` | UI runtime |
-| `react-router-dom` | Client-side routing |
-| `axios` | HTTP client |
-| `tailwindcss` | Styling (v4, CSS-first) | in use |
-
-| `react-hot-toast` | Toast notifications |
-| `lucide-react`, `react-icons` | Icon sets |
-| `eslint` + plugins | Linting |
-| `prettier` + `prettier-plugin-tailwindcss` | Formatting and class sorting |
 
 ---
 
@@ -235,21 +318,33 @@ utility classes stay in a predictable sequence. Registered in
 │       │   └── roles.js            # role names, levels, permission helpers
 │       ├── controllers/
 │       │   ├── auth.controller.js
-│       │   └── health.controller.js
+│       │   ├── admin.controller.js
+│       │   ├── carrier.controller.js
+│       │   ├── driver.controller.js
+│       │   ├── shipper.controller.js
+│       │   ├── health.controller.js
+│       │   └── profile.factory.js   # shared profile behaviour
 │       ├── middlewares/
 │       │   ├── auth.middleware.js  # requireAuth, authorize
 │       │   └── error-handler.js    # 404 + central error handler
 │       ├── models/
-│       │   └── user.model.js       # Mongoose schema
+│       │   ├── user.model.js       # Mongoose schema
+│       │   └── profile.model.js    # four profile collections
 │       ├── routes/
 │       │   ├── index.js            # mounts feature routers
+│       │   ├── admins.routes.js
 │       │   ├── auth.routes.js
-│       │   └── health.routes.js
+│       │   ├── carriers.routes.js
+│       │   ├── drivers.routes.js
+│       │   ├── health.routes.js
+│       │   └── shippers.routes.js
 │       ├── utils/
 │       │   ├── api-error.js        # ApiError, for expected failures
 │       │   └── token.js            # JWT sign and verify
 │       ├── app.js                  # middleware wiring
 │       └── server.js               # entry point, connects DB then listens
+├── backend/scripts/
+│   └── seed-admin.mjs     # creates the first admin accounts
 ├── frontend/           # Vite + React client
 │   └── src/
 │       ├── lib/

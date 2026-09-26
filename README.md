@@ -20,6 +20,7 @@ protected dashboard.
 | Permissions | Live. Six permissions, super admin grants them to admins. |
 | Profiles | Live. Four collections, one per role, strict role isolation. |
 | Network | Live. Shipper/carrier invitations, requests, connections. |
+| Driver invites | Live. Carrier invites drivers by email, driver activates. |
 | Frontend | Signup, sign-in, and a role-aware admin panel with seven sections. |
 | Tailwind | Active. Imported in `index.css`, generating a real stylesheet. |
 
@@ -38,6 +39,7 @@ protected dashboard.
 | `bcryptjs` | Password hashing | in use |
 | `jsonwebtoken` | JWT auth tokens | in use |
 | `mongoose` | MongoDB ODM | in use |
+| `nodemailer` | SMTP for driver invitations | in use |
 | `zod` | Request validation | in use |
 
 **Frontend** — React 19 + Vite 8
@@ -455,6 +457,72 @@ cannot be invalidated without a blocklist.
 
 ---
 
+## Driver invitations
+
+A carrier invites its drivers by email. The driver receives their login
+credentials and can then sign in, or follow a link in the same email to choose
+their own password instead.
+
+| Route | Who | What |
+| --- | --- | --- |
+| `GET` | `carrier` | Its own drivers, split into invited and registered |
+| `POST` | `carrier` | Invite a driver with a name, email, and password |
+| `GET` | `carrier` | One invitation, with driver details and profile |
+| `PATCH` | `carrier` | Withdraw a pending invitation |
+| `POST` | Public | Driver activates with the emailed token and a new password |
+
+### Invited versus registered
+
+The carrier sees three groups, which is the point of the feature:
+
+| Group | Meaning |
+| --- | --- |
+| **Invited** | Invitation sent, the driver has not signed in yet |
+| **Registered** | The driver has signed in, or activated and set their own password |
+| **Withdrawn / expired** | The carrier pulled it back, or the window passed |
+
+A driver's **first successful sign-in is what marks the invitation activated**,
+so the distinction needs no extra ceremony from the driver. Activating through
+the emailed link does the same thing immediately.
+
+The driver account is created at invite time so the emailed password works on
+first sign-in, and its password is hashed before it ever touches the database.
+
+### Security
+
+A carrier-chosen password travelling by email is weak, so the same email also
+carries a one-time activation token. A driver who does not want that password in
+their inbox opens `/activate?token=...` and sets their own.
+
+- Tokens are 32 random bytes, stored hashed from the database's point of view
+  via `select: false`, and **spent on use** — activating rotates the token, so
+  the link cannot be replayed.
+- An invitation is refused if it was withdrawn or past `INVITE_EXPIRES_DAYS`.
+- Only the inviting carrier can see, list, or withdraw its own invitations. A
+  second carrier gets `404`, not a hint that the driver exists.
+- Withdrawing blocks activation, but it does **not** disable an account the
+  driver may already have signed into.
+
+### Email delivery
+
+`src/services/mailer.js` sends through SMTP when `SMTP_HOST` is set. When it is
+not — which is the default — the message is written to `backend/.devlogs/outbox/`
+instead, and the UI says so plainly rather than claiming it was sent. That keeps
+the whole flow testable without credentials, and makes it obvious in development
+that delivery is not real yet.
+
+**SMTP has not been tested**, because there are no credentials configured. The
+outbox path is what the tests and the browser walkthrough exercise.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `APP_URL` | `http://localhost:5173` | Frontend URL, used to build the activation link |
+| `INVITE_EXPIRES_DAYS` | `7` | How long an invitation stays valid |
+| `SMTP_HOST` | empty | Leave empty to use the outbox instead of sending |
+| `SMTP_PORT` | `587` | |
+| `SMTP_USER` / `SMTP_PASS` | empty | SMTP credentials |
+| `MAIL_FROM` | `no-reply@rk-source.local` | Sender address |
+
 ## Network
 
 Shippers and carriers connect with each other: either side can send an
@@ -547,6 +615,8 @@ validation.
 | `/dashboard/carriers` | Holds a carrier permission | List and inspect carrier accounts |
 | `/dashboard/drivers` | Holds a driver permission | List and inspect driver accounts |
 | `/dashboard/network` | `shipper`, `carrier` | Invitations, requests, connections |
+| `/dashboard/my-drivers` | `carrier` | Invite drivers, see invited and registered |
+| `/activate` | Public | Driver sets their own password from the emailed link |
 | `/dashboard/settings` | Any signed-in user | Account details, change password |
 
 ### The sidebar
@@ -566,9 +636,8 @@ collection**, so it always shows initials — see Known gaps below.
   sections whose permissions it was granted. One holding just `carrier:list`
   and `carrier:read` sees Carrier management and nothing else. Admin
   management is super-admin-only, since both actions on it are.
-- A **shipper or carrier** sees Overview, Network, and Settings. The management
-  sections are admin-only, and the network is the two-sided feature between
-  shippers and carriers.
+- A **carrier** sees Overview, Network, My drivers, and Settings.
+- A **shipper** sees Overview, Network, and Settings.
 - A **driver** sees Overview and Settings only.
 
 A hidden link is not access control, so `RequireSection` guards the routes as
@@ -732,13 +801,17 @@ utility classes stay in a predictable sequence. Registered in
 │       ├── models/
 │       │   ├── user.model.js       # Mongoose schema
 │       │   ├── profile.model.js    # four profile collections
-│       │   └── connection.model.js # shipper <-> carrier links
+│       │   ├── connection.model.js # shipper <-> carrier links
+│       │   └── driver-invitation.model.js
+│       ├── services/
+│       │   └── mailer.js           # SMTP, with an outbox fallback
 │       ├── routes/
 │       │   ├── index.js            # mounts feature routers
 │       │   ├── admins.routes.js
 │       │   ├── auth.routes.js
 │       │   ├── carriers.routes.js
 │       │   ├── connections.routes.js
+│       │   ├── driver-invitations.routes.js
 │       │   ├── drivers.routes.js
 │       │   ├── health.routes.js
 │       │   └── shippers.routes.js
@@ -750,6 +823,7 @@ utility classes stay in a predictable sequence. Registered in
 │       │   ├── auth.validation.js
 │       │   ├── connection.validation.js
 │       │   ├── directory.validation.js
+│       │   ├── driver-invitation.validation.js
 │       │   └── profile.validation.js
 │       ├── app.js                  # middleware wiring
 │       └── server.js               # entry point, connects DB then listens
@@ -785,6 +859,8 @@ utility classes stay in a predictable sequence. Registered in
 │       │   ├── AdminManagement.jsx
 │       │   ├── RoleManagement.jsx
 │       │   ├── Network.jsx
+│       │   ├── Drivers.jsx
+│       │   ├── Activate.jsx
 │       │   ├── ShipperManagement.jsx
 │       │   ├── CarrierManagement.jsx
 │       │   ├── DriverManagement.jsx
@@ -1079,7 +1155,9 @@ Rough order of work, not a commitment. Done so far is struck through.
 7. ~~Frontend auth — login, register, dashboard~~
 8. ~~Admin panel — sidebar, users, admins, permissions, role management~~
 9. ~~Network — shipper/carrier invitations, requests, connections~~
-10. Decide whether `super_admin` gets a profile collection, so its sidebar
+10. ~~Carrier invites a driver by email, driver activates~~
+11. Configure real SMTP so invitations are actually delivered
+12. Decide whether `super_admin` gets a profile collection, so its sidebar
     avatar can show a real image instead of initials
 9. Rate limiting on the auth routes (`express-rate-limit`)
 10. Token revocation, or accept that logout is client-side only

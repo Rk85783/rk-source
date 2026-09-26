@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import { config } from "../config/index.js";
 import { PERMISSION_GROUPS } from "../config/permissions.js";
 import { User } from "../models/user.model.js";
+import { markActivatedOnLogin } from "./driver-invitation.controller.js";
 import { profileModelFor } from "../models/profile.model.js";
 import { publicProfile } from "./profile.factory.js";
 import { ApiError } from "../utils/api-error.js";
@@ -56,6 +57,9 @@ export const login = async (req, res, next) => {
       throw new ApiError(401, "Invalid email or password");
     }
     if (!user.isActive) throw new ApiError(403, "Account is disabled");
+
+    // A first sign-in is what marks a driver invitation as activated.
+    await markActivatedOnLogin(user);
 
     res.json({ user: publicUser(user), token: signToken(user) });
   } catch (err) {

@@ -11,11 +11,13 @@ import {
   setUserPermissions,
   updateRole,
 } from "../controllers/auth.controller.js";
+import { activateDriver } from "../controllers/driver-invitation.controller.js";
 import {
   authorizeAtLeast,
   requireAuth,
 } from "../middlewares/auth.middleware.js";
 import { validate } from "../middlewares/validate.middleware.js";
+import { activateDriverSchema } from "../validations/driver-invitation.validation.js";
 import {
   changePasswordSchema,
   createAdminSchema,
@@ -30,6 +32,7 @@ const router = Router();
 
 router.post("/register", validate(registerSchema), register);
 router.post("/login", validate(loginSchema), login);
+router.post("/activate-driver", validate(activateDriverSchema), activateDriver);
 
 router.get("/me", requireAuth, me);
 router.patch(

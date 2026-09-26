@@ -3,9 +3,11 @@ import { AdminLayout } from "./components/AdminLayout";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import { RequireSection } from "./components/RequireSection";
 import { AuthProvider } from "./context/AuthProvider";
+import { Activate } from "./pages/Activate";
 import { AdminManagement } from "./pages/AdminManagement";
 import { CarrierManagement } from "./pages/CarrierManagement";
 import { DriverManagement } from "./pages/DriverManagement";
+import { Drivers } from "./pages/Drivers";
 import { Home } from "./pages/Home";
 import { Login } from "./pages/Login";
 import { Network } from "./pages/Network";
@@ -25,6 +27,7 @@ const App = () => (
       <Route path="/" element={<Home />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/activate" element={<Activate />} />
 
       <Route
         path="/dashboard"
@@ -50,6 +53,7 @@ const App = () => (
           element={gated("drivers", <DriverManagement />)}
         />
         <Route path="network" element={gated("network", <Network />)} />
+        <Route path="my-drivers" element={gated("myDrivers", <Drivers />)} />
         <Route path="settings" element={<Settings />} />
       </Route>
 

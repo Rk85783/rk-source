@@ -28,6 +28,11 @@ export const canAccess = (user, section) => {
     return user.role === "shipper" || user.role === "carrier";
   }
 
+  // A carrier manages the drivers it has invited.
+  if (section === "myDrivers") {
+    return user.role === "carrier";
+  }
+
   const singular = section.replace(/s$/, "");
   const required = PERMISSIONS[singular];
 

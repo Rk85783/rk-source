@@ -116,3 +116,17 @@ export const searchDirectory = (search = "") =>
   api.get("/api/connections/directory/search", {
     params: { search: search || undefined, limit: 50 },
   });
+
+export const inviteDriver = (payload) =>
+  api.post("/api/carriers/invitations", payload);
+
+export const listInvitations = (status = "all") =>
+  api.get("/api/carriers/invitations", { params: { status } });
+
+export const getInvitation = (id) => api.get(`/api/carriers/invitations/${id}`);
+
+export const revokeInvitation = (id) =>
+  api.patch(`/api/carriers/invitations/${id}/revoke`);
+
+export const activateDriver = (payload) =>
+  api.post("/api/auth/activate-driver", payload);

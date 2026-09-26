@@ -59,3 +59,20 @@ export const toFieldErrors = (result) => {
 
   return { fields, summary: Object.values(fields)[0] };
 };
+
+export const inviteDriverSchema = z.object({
+  name: trimmed(2, 60),
+  email,
+  password,
+});
+
+export const activateDriverSchema = z
+  .object({
+    token: z.string().trim().min(10, "This link is not valid"),
+    password,
+    confirmPassword: z.string().min(1, "Confirm your password"),
+  })
+  .refine((data) => data.password === data.confirmPassword, {
+    message: "Passwords do not match",
+    path: ["confirmPassword"],
+  });

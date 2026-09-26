@@ -85,6 +85,9 @@ export const Sidebar = () => {
         <SidebarLink to="/dashboard/network" section="network">
           Network
         </SidebarLink>
+        <SidebarLink to="/dashboard/my-drivers" section="myDrivers">
+          My drivers
+        </SidebarLink>
         <SidebarLink to="/dashboard/settings" section="settings">
           Settings
         </SidebarLink>

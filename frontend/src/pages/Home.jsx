@@ -26,20 +26,44 @@ const Home = () => {
   }, []);
 
   return (
-    <main>
-      <h1>Rk-source</h1>
+    <main className="min-h-screen bg-slate-50 text-slate-900">
+      <div className="mx-auto max-w-2xl px-6 py-16">
+        <h1 className="text-3xl font-bold tracking-tight">Rk-source</h1>
+        <p className="mt-2 text-slate-600">
+          Express API and React frontend, connected.
+        </p>
 
-      {health.loading && <p>Checking API...</p>}
+        <section className="mt-8 rounded-lg border border-slate-200 bg-white p-6 shadow-sm">
+          {health.loading && <p className="text-slate-500">Checking API...</p>}
 
-      {health.error && <p role="alert">API unreachable: {health.error}</p>}
+          {health.error && (
+            <p role="alert" className="text-red-600">
+              API unreachable: {health.error}
+            </p>
+          )}
 
-      {health.data && (
-        <section>
-          <p>API status: {health.data.status}</p>
-          <p>Environment: {health.data.env}</p>
-          <p>Database: {health.data.database.state}</p>
+          {health.data && (
+            <dl className="space-y-2">
+              <div className="flex justify-between">
+                <dt className="text-slate-500">API status</dt>
+                <dd className="font-medium text-green-600">
+                  {health.data.status}
+                </dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-slate-500">Environment</dt>
+                <dd className="font-medium">{health.data.env}</dd>
+              </div>
+              <div className="flex justify-between">
+                <dt className="text-slate-500">Database</dt>
+                <dd className="font-medium text-green-600">
+                  {health.data.database.state}
+                </dd>
+              </div>
+            </dl>
+          )}
         </section>
-      )}
+      </div>
     </main>
   );
 };

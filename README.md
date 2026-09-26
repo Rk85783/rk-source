@@ -12,10 +12,10 @@ Early scaffold. The API boots and the frontend builds, but no feature logic has 
 
 | Part | State |
 | --- | --- |
-| Backend API | Runs. CORS enabled, Mongo connected, `GET /` and `GET /api/health`. |
-| Frontend | Builds. `Home` page calls the API and shows its status. |
-| Auth | Dependencies installed, **not yet wired**. |
-| Tailwind | Plugin installed, **stylesheet not yet imported**. |
+| Backend API | Runs. CORS, Mongo connected, health + auth endpoints. |
+| Frontend | Builds. Tailwind active, `Home` page calls the API and shows its status. |
+| Auth | Live. Register, login, JWT, role gating. No rate limiting. |
+| Tailwind | Active. Imported in `index.css`, generating a real stylesheet. |
 
 ---
 
@@ -29,9 +29,120 @@ Early scaffold. The API boots and the frontend builds, but no feature logic has 
 | `dotenv` | Loads `.env` | in use |
 | `nodemon` | Dev auto-restart | dev only |
 | `backend` | `cors` | Cross-origin requests | in use |
-| `bcryptjs` | Password hashing | installed, unused |
-| `jsonwebtoken` | JWT auth tokens | installed, unused |
+| `bcryptjs` | Password hashing | in use |
+| `jsonwebtoken` | JWT auth tokens | in use |
 | `mongoose` | MongoDB ODM | in use |
+
+---
+
+## Auth
+
+JWT-based authentication. Passwords are hashed with bcrypt and never stored or
+returned in plaintext. Tokens are sent as `Authorization: Bearer <token>`.
+
+### Roles
+
+| Role | Level | Meaning |
+| --- | --- | --- |
+| `carrier` | 10 | Base role, granted at signup |
+| `shipper` | 10 | Base role, granted at signup |
+| `driver` | 10 | Base role, granted at signup |
+| `admin` | 20 | Can change other users' roles |
+| `super_admin` | 30 | Can grant `super_admin` |
+
+Levels live in `backend/src/config/roles.js` so role checks are never scattered
+across files.
+
+**Privilege escalation is blocked at signup.** `POST /api/auth/register` accepts
+only `carrier`, `shipper`, and `driver`. Requesting `admin` or `super_admin` is
+rejected with `400`. Admin roles can only be granted by an authenticated admin
+through `PATCH /api/auth/users/:userId/role`. Granting `super_admin` requires an
+existing `super_admin` — an `admin` cannot promote anyone to it.
+
+### Endpoints
+
+| Method | Path | Access | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/api/auth/register` | Public | Create an account, base roles only |
+| `POST` | `/api/auth/login` | Public | Exchange credentials for a token |
+| `GET` | `/api/auth/me` | Authenticated | Current user |
+| `PATCH` | `/api/auth/me/password` | Authenticated | Change own password |
+| `PATCH` | `/api/auth/users/:userId/role` | `admin` | Change a user's role |
+
+### Requests and responses
+
+```bash
+# Sign up
+curl -X POST http://localhost:4000/api/auth/register \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Asha","email":"asha@example.com","password":"password123","role":"shipper"}'
+
+# Log in
+curl -X POST http://localhost:4000/api/auth/login \
+  -H 'Content-Type: application/json' \
+  -d '{"email":"asha@example.com","password":"password123"}'
+
+# Use the token
+curl http://localhost:4000/api/auth/me -H "Authorization: Bearer <token>"
+```
+
+Both `register` and `login` return:
+
+```json
+{
+  "user": { "id": "...", "name": "...", "email": "...", "role": "shipper", "createdAt": "..." },
+  "token": "<jwt>"
+}
+```
+
+The `password` and `isActive` fields are `select: false` on the schema, so they
+are excluded from queries unless a caller explicitly asks for them, and neither
+is ever included in a response.
+
+### Status codes
+
+| Code | Meaning |
+| --- | --- |
+| `400` | Validation failed, or an admin role was requested at signup |
+| `401` | Missing, invalid, or expired token, or wrong credentials |
+| `403` | Authenticated but not permitted, or account disabled |
+| `409` | Email already registered |
+
+Login returns the same `401` for an unknown email and a wrong password, so the
+endpoint does not reveal which emails exist.
+
+### Environment
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `JWT_SECRET` | none | Signs tokens. **Required** — must be at least 32 characters |
+| `JWT_EXPIRES_IN` | `7d` | Token lifetime |
+| `BCRYPT_ROUNDS` | `12` | bcrypt cost factor |
+
+`server.js` refuses to start in production when `JWT_SECRET` is missing or too
+short, and only warns in development. Generate a secret with:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
+```
+
+### Middleware
+
+`backend/src/middlewares/auth.middleware.js` provides `requireAuth` (validates
+the token and loads the user), `authorize(...roles)`, and
+`authorizeAtLeast(minimum)`. To protect a route:
+
+```js
+router.get("/me", requireAuth, me);
+router.patch("/users/:userId/role", requireAuth, authorize("admin"), updateRole);
+```
+
+### Not done yet
+
+There is no rate limiting on the auth routes, so login and register are open to
+brute-force attempts. Add `express-rate-limit` before this is exposed publicly.
+Tokens are not revocable — there is no logout endpoint, because a stateless JWT
+cannot be invalidated without a blocklist.
 
 **Frontend** — React 19 + Vite 8
 
@@ -40,10 +151,75 @@ Early scaffold. The API boots and the frontend builds, but no feature logic has 
 | `react`, `react-dom` | UI runtime |
 | `react-router-dom` | Client-side routing |
 | `axios` | HTTP client |
-| `@tailwindcss/vite`, `tailwindcss` | Styling (v4, CSS-first) |
+| `tailwindcss` | Styling (v4, CSS-first) | in use |
+
 | `react-hot-toast` | Toast notifications |
 | `lucide-react`, `react-icons` | Icon sets |
 | `eslint` + plugins | Linting |
+| `prettier` + `prettier-plugin-tailwindcss` | Formatting and class sorting |
+
+---
+
+## Tailwind CSS
+
+Tailwind v4, wired through the `@tailwindcss/vite` plugin. There is no
+`tailwind.config.js` and no `content` array — v4 is CSS-first and detects the
+files to scan on its own.
+
+The whole setup is two things:
+
+1. `frontend/vite.config.js` registers the plugin:
+
+   ```js
+   plugins: [react(), tailwindcss()],
+   ```
+
+2. `frontend/src/index.css` imports Tailwind:
+
+   ```css
+   @import "tailwindcss";
+   ```
+
+**Both are required.** The plugin without the import produces a build with a
+`0.00 kB` stylesheet and no class does anything — which is exactly the state this
+project was in. If Tailwind classes ever stop applying, check that the import in
+`index.css` still exists before suspecting the classes.
+
+### Confirming it works
+
+A build that produces a real stylesheet is the quick check:
+
+```bash
+cd frontend && npm run build
+# dist/assets/index-*.css   10.01 kB
+```
+
+A `0.00 kB` CSS file means Tailwind is not running. For a definitive check, load
+the page and read the computed style — `text-3xl` should compute to `30px` and
+`font-bold` to `700`.
+
+### Customising the theme
+
+Theme values are CSS variables inside a `@theme` block in `index.css`, not a JS
+config. Add brand colours, fonts, and spacing there once the visual direction is
+decided:
+
+```css
+@import "tailwindcss";
+
+@theme {
+  --color-brand-500: oklch(0.55 0.2 265);
+  --font-display: "Inter", sans-serif;
+}
+```
+
+Those become `bg-brand-500` and `font-display`.
+
+### Class ordering
+
+`prettier-plugin-tailwindcss` sorts classes into Tailwind's canonical order, so
+utility classes stay in a predictable sequence. Registered in
+`frontend/.prettierrc`.
 
 ---
 
@@ -55,18 +231,23 @@ Early scaffold. The API boots and the frontend builds, but no feature logic has 
 │   └── src/
 │       ├── config/
 │       │   ├── index.js            # env access, single config object
-│       │   └── db.js               # Mongoose connection and state helpers
+│       │   ├── db.js               # Mongoose connection and state helpers
+│       │   └── roles.js            # role names, levels, permission helpers
 │       ├── controllers/
+│       │   ├── auth.controller.js
 │       │   └── health.controller.js
 │       ├── middlewares/
+│       │   ├── auth.middleware.js  # requireAuth, authorize
 │       │   └── error-handler.js    # 404 + central error handler
 │       ├── models/
 │       │   └── user.model.js       # Mongoose schema
 │       ├── routes/
 │       │   ├── index.js            # mounts feature routers
+│       │   ├── auth.routes.js
 │       │   └── health.routes.js
 │       ├── utils/
-│       │   └── api-error.js        # ApiError, for expected failures
+│       │   ├── api-error.js        # ApiError, for expected failures
+│       │   └── token.js            # JWT sign and verify
 │       ├── app.js                  # middleware wiring
 │       └── server.js               # entry point, connects DB then listens
 ├── frontend/           # Vite + React client
@@ -200,7 +381,8 @@ Set identically in both workspaces:
 
 ### Possible next step
 
-`prettier-plugin-tailwindcss` would sort Tailwind classes automatically. Not installed yet — the Tailwind stylesheet is not wired up either (see Branding below).
+`prettier-plugin-tailwindcss` is installed in the frontend and sorts utility
+classes into canonical order. See [Tailwind CSS](#tailwind-css).
 
 ---
 
@@ -273,13 +455,15 @@ MongoDB via Mongoose 8. `MONGO_URI` in `backend/.env` points at a local instance
 
 ### Models
 
-`backend/src/models/user.model.js` exists to support the upcoming auth work. It is not wired to any route yet.
+`backend/src/models/user.model.js` backs the auth system.
 
 | Field | Type | Rules |
 | --- | --- | --- |
-| `name` | String | required, trimmed |
-| `email` | String | required, unique, lowercased, trimmed |
-| `password` | String | required, holds a bcrypt hash — never plaintext |
+| `name` | String | required, 2–60 chars, trimmed |
+| `email` | String | required, unique, lowercased, trimmed, format-checked |
+| `password` | String | required, bcrypt hash, `select: false` |
+| `role` | String | required, one of the five roles, defaults to `carrier` |
+| `isActive` | Boolean | defaults to `true`, `select: false` |
 
 `timestamps: true`, so `createdAt` and `updatedAt` are maintained automatically.
 
@@ -328,7 +512,7 @@ Deliberately deferred; no UI work done. Pick up from here:
 - [ ] `<title>frontend</title>` → Rk-source (`frontend/index.html:7`)
 - [ ] Package names `frontend` / `backend` → branded (`frontend/package.json:2`, `backend/package.json:2`)
 - [ ] `favicon.svg` is still the Vite logo — replace with an Rk-source mark
-- [ ] Import Tailwind in `frontend/src/index.css` (currently empty, so Tailwind classes do nothing)
+- [ ] Pick brand colours and fonts, then add a `@theme` block to `index.css`
 - [ ] Decide visual direction — not chosen yet
 
 ### Fixed

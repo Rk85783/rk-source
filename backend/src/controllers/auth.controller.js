@@ -1,11 +1,6 @@
 import bcrypt from "bcryptjs";
 import { config } from "../config/index.js";
-import { isValidRole, PUBLIC_ROLES, ROLES } from "../config/roles.js";
-import {
-  ALL_PERMISSIONS,
-  isValidPermission,
-  PERMISSION_GROUPS,
-} from "../config/permissions.js";
+import { PERMISSION_GROUPS } from "../config/permissions.js";
 import { User } from "../models/user.model.js";
 import { profileModelFor } from "../models/profile.model.js";
 import { publicProfile } from "./profile.factory.js";
@@ -15,35 +10,27 @@ import { createUser, normaliseEmail, publicUser } from "../utils/user.js";
 
 export const register = async (req, res, next) => {
   try {
-    const { name, email, password, role } = req.body;
-
-    const requestedRole = role || "carrier";
-    if (!isValidRole(requestedRole) || !PUBLIC_ROLES.includes(requestedRole)) {
-      throw new ApiError(
-        400,
-        `Role must be one of: ${PUBLIC_ROLES.join(", ")}. Other roles are assigned by an administrator.`,
-      );
-    }
+    const { name, email, password, role, firstName, lastName, profileImage } =
+      req.body;
 
     const user = await createUser({
       name,
       email,
       password,
-      role: requestedRole,
+      role: role || "carrier",
     });
 
     // A profile is created only when the client sends the profile fields, so
     // signup stays a single step without making them mandatory.
     let profile = null;
     const Profile = profileModelFor(user.role);
-    const { firstName, lastName, profileImage } = req.body;
 
     if (Profile && firstName && lastName) {
       profile = await Profile.create({
         user: user._id,
-        firstName: String(firstName).trim(),
-        lastName: String(lastName).trim(),
-        profileImage: profileImage ? String(profileImage).trim() : "",
+        firstName,
+        lastName,
+        profileImage: profileImage || "",
       });
     }
 
@@ -60,15 +47,12 @@ export const register = async (req, res, next) => {
 export const login = async (req, res, next) => {
   try {
     const { email, password } = req.body;
-    if (!email || !password) {
-      throw new ApiError(400, "Email and password are required");
-    }
 
     const user = await User.findOne({ email: normaliseEmail(email) }).select(
       "+password +isActive",
     );
 
-    if (!user || !(await bcrypt.compare(String(password), user.password))) {
+    if (!user || !(await bcrypt.compare(password, user.password))) {
       throw new ApiError(401, "Invalid email or password");
     }
     if (!user.isActive) throw new ApiError(403, "Account is disabled");
@@ -86,19 +70,13 @@ export const me = async (req, res) => {
 export const changePassword = async (req, res, next) => {
   try {
     const { currentPassword, newPassword } = req.body;
-    if (!currentPassword || !newPassword) {
-      throw new ApiError(400, "Current and new password are required");
-    }
-    if (String(newPassword).length < 8) {
-      throw new ApiError(400, "New password must be at least 8 characters");
-    }
 
     const user = await User.findById(req.user._id).select("+password");
-    if (!(await bcrypt.compare(String(currentPassword), user.password))) {
+    if (!(await bcrypt.compare(currentPassword, user.password))) {
       throw new ApiError(401, "Current password is incorrect");
     }
 
-    user.password = await bcrypt.hash(String(newPassword), config.bcryptRounds);
+    user.password = await bcrypt.hash(newPassword, config.bcryptRounds);
     await user.save();
 
     res.json({ message: "Password updated" });
@@ -109,9 +87,39 @@ export const changePassword = async (req, res, next) => {
 
 export const createAdmin = async (req, res, next) => {
   try {
-    const { name, email, password } = req.body;
-    const user = await createUser({ name, email, password, role: "admin" });
+    const user = await createUser({ ...req.body, role: "admin" });
     res.status(201).json({ user: publicUser(user) });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const listPermissions = async (req, res) => {
+  res.json({ permissions: PERMISSION_GROUPS });
+};
+
+export const getUserPermissions = async (req, res, next) => {
+  try {
+    const target = await User.findById(req.params.userId);
+    if (!target) throw new ApiError(404, "User not found");
+    assertPermissionTarget(target);
+
+    res.json({ user: publicUser(target), permissions: target.permissions });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const setUserPermissions = async (req, res, next) => {
+  try {
+    const target = await User.findById(req.params.userId);
+    if (!target) throw new ApiError(404, "User not found");
+    assertPermissionTarget(target);
+
+    target.permissions = [...new Set(req.body.permissions)];
+    await target.save();
+
+    res.json({ user: publicUser(target), permissions: target.permissions });
   } catch (err) {
     next(err);
   }
@@ -120,9 +128,6 @@ export const createAdmin = async (req, res, next) => {
 export const updateRole = async (req, res, next) => {
   try {
     const { role } = req.body;
-    if (!isValidRole(role)) {
-      throw new ApiError(400, `Role must be one of: ${ROLES.join(", ")}`);
-    }
 
     if (role === "super_admin") {
       throw new ApiError(
@@ -147,99 +152,37 @@ export const updateRole = async (req, res, next) => {
   }
 };
 
-export const listPermissions = async (req, res) => {
-  res.json({ permissions: PERMISSION_GROUPS, all: ALL_PERMISSIONS });
-};
-
-export const getUserPermissions = async (req, res, next) => {
-  try {
-    const target = await User.findById(req.params.userId);
-    if (!target) throw new ApiError(404, "User not found");
-    if (target.role !== "admin") {
-      throw new ApiError(
-        400,
-        `Permissions are managed for admins, not ${target.role}s`,
-      );
-    }
-
-    res.json({
-      user: {
-        id: target._id.toString(),
-        email: target.email,
-        role: target.role,
-      },
-      permissions: target.permissions,
-    });
-  } catch (err) {
-    next(err);
-  }
-};
-
-export const setUserPermissions = async (req, res, next) => {
-  try {
-    const { permissions } = req.body;
-    if (!Array.isArray(permissions)) {
-      throw new ApiError(400, "permissions must be an array");
-    }
-
-    const unknown = permissions.filter((p) => !isValidPermission(p));
-    if (unknown.length) {
-      throw new ApiError(400, `Unknown permission: ${unknown.join(", ")}`);
-    }
-
-    const target = await User.findById(req.params.userId);
-    if (!target) throw new ApiError(404, "User not found");
-    if (target.role !== "admin") {
-      throw new ApiError(
-        400,
-        `Permissions are managed for admins, not ${target.role}s`,
-      );
-    }
-
-    target.permissions = [...new Set(permissions)];
-    await target.save();
-
-    res.json({
-      user: {
-        id: target._id.toString(),
-        email: target.email,
-        role: target.role,
-      },
-      permissions: target.permissions,
-    });
-  } catch (err) {
-    next(err);
-  }
-};
-
 export const listUsers = async (req, res, next) => {
   try {
-    const { role, page = 1, limit = 20 } = req.query;
+    const { role, page, limit } = req.validated;
 
-    const filter = {};
-    if (role) {
-      if (!isValidRole(role)) {
-        throw new ApiError(400, `Role must be one of: ${ROLES.join(", ")}`);
-      }
-      filter.role = role;
-    }
-
-    const skip = (Math.max(1, Number(page)) - 1) * Number(limit);
-    const perPage = Math.min(100, Math.max(1, Number(limit)));
+    const filter = role ? { role } : {};
 
     const [users, total] = await Promise.all([
-      User.find(filter).sort({ createdAt: -1 }).skip(skip).limit(perPage),
+      User.find(filter)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(limit),
       User.countDocuments(filter),
     ]);
 
     res.json({
       users: users.map(publicUser),
-      page: Math.max(1, Number(page)),
-      limit: perPage,
+      page,
+      limit,
       total,
-      pages: Math.ceil(total / perPage),
+      pages: Math.ceil(total / limit),
     });
   } catch (err) {
     next(err);
+  }
+};
+
+const assertPermissionTarget = (user) => {
+  if (user.role !== "admin") {
+    throw new ApiError(
+      400,
+      `Permissions are managed for admins, not ${user.role}s`,
+    );
   }
 };

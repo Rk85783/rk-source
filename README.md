@@ -15,6 +15,7 @@ real database; the frontend has no auth screens yet.
 | --- | --- |
 | Backend API | Runs. CORS, Mongo connected, health + auth + profile endpoints. |
 | Auth | Live. Signup, login, JWT, five roles, seeded super admin. No rate limiting. |
+| Validation | Zod at every route boundary. |
 | Profiles | Live. Four collections, one per role, strict role isolation. |
 | Frontend | Builds. Tailwind active, `Home` shows API status. No auth UI. |
 | Tailwind | Active. Imported in `index.css`, generating a real stylesheet. |
@@ -34,6 +35,7 @@ real database; the frontend has no auth screens yet.
 | `bcryptjs` | Password hashing | in use |
 | `jsonwebtoken` | JWT auth tokens | in use |
 | `mongoose` | MongoDB ODM | in use |
+| `zod` | Request validation | in use |
 
 **Frontend** — React 19 + Vite 8
 
@@ -50,7 +52,72 @@ real database; the frontend has no auth screens yet.
 
 ---
 
-## Permissions
+## Validation
+
+Request shapes are validated with [Zod](https://zod.dev) 4 at the route boundary,
+in `backend/src/validations/`. Joi was considered and rejected: it pulls in four
+extra dependencies, and Zod is the only one of the two with first-class React
+Hook Form support, which the frontend will need.
+
+### How it works
+
+A schema is attached to a route with `validate()`. The parsed result replaces
+`req.body`, so controllers receive trimmed, coerced, lowercased values rather
+than whatever the client sent.
+
+```js
+import { validate } from "../middlewares/validate.middleware.js";
+import { registerSchema } from "../validations/auth.validation.js";
+
+router.post("/register", validate(registerSchema), register);
+```
+
+Failures return `400` with every problem listed:
+
+```json
+{
+  "message": "name: Must be at least 2 characters; email: Invalid email address",
+  "errors": [
+    { "field": "name", "message": "Must be at least 2 characters" },
+    { "field": "email", "message": "Invalid email address" }
+  ]
+}
+```
+
+`message` is a joined summary for logging and simple display; `errors` is the
+structured list a form should map onto its inputs.
+
+### Query strings need special handling
+
+Validated query values land on **`req.validated`**, not `req.query`. Express 5
+defines `req.query` as a getter-only property, so assigning to it throws a
+`TypeError`. This is not a stylistic choice — `req.query = parsed` breaks the
+list endpoints.
+
+```js
+router.get("/", requirePermission(PERMISSIONS.CARRIER_LIST), validate(schema, "query"), list);
+
+// in the controller
+const { page, limit, search } = req.validated;
+```
+
+### What belongs in a schema, and what does not
+
+| Concern | Where |
+| --- | --- |
+| Shape: types, lengths, formats, enums | Zod schema |
+| Coercion: `"20"` → `20`, query defaults | Zod schema |
+| Uniqueness, existing records | Controller, needs a query |
+| Credentials, permissions, state | Controller, throws `ApiError` |
+
+Mongoose keeps its own schema validation. The two do different jobs: Zod checks
+the request at the boundary, Mongoose protects the collection on write.
+
+Unknown body fields are stripped rather than rejected, so a client cannot
+smuggle in `isAdmin` or `role` by adding them to a payload. Role and permission
+fields are additionally constrained by `z.enum`, so they can only ever hold a
+value that already exists in `config/`.
+
 
 A `super_admin` grants permissions to admins. An admin holds exactly what it was
 granted, and nothing more.
@@ -467,7 +534,8 @@ utility classes stay in a predictable sequence. Registered in
 │       │   └── profile.factory.js   # shared profile behaviour
 │       ├── middlewares/
 │       │   ├── auth.middleware.js  # requireAuth, authorize, requirePermission
-│       │   └── error-handler.js    # 404 + central error handler
+│       │   ├── error-handler.js    # 404 + central error handler
+│       │   └── validate.middleware.js  # Zod boundary validation
 │       ├── models/
 │       │   ├── user.model.js       # Mongoose schema
 │       │   └── profile.model.js    # four profile collections
@@ -483,6 +551,9 @@ utility classes stay in a predictable sequence. Registered in
 │       │   ├── api-error.js        # ApiError, for expected failures
 │       │   ├── token.js            # JWT sign and verify
 │       │   └── user.js             # validation, creation, serialisation
+│       ├── validations/
+│       │   ├── auth.validation.js
+│       │   └── profile.validation.js
 │       ├── app.js                  # middleware wiring
 │       └── server.js               # entry point, connects DB then listens
 ├── backend/scripts/
@@ -516,6 +587,8 @@ The React client is the view layer, so there is no server-side template folder.
 ### Conventions
 
 - **One resource per router.** `routes/index.js` mounts feature routers and nothing else. A new resource gets `src/routes/<name>.routes.js` plus a matching `src/controllers/<name>.controller.js`.
+- **Every route that takes input has a schema.** No exceptions, including the
+  profile routers. A route without `validate()` is a bug.
 - **No logic in route files.** Every route handler is a named controller function. Even `GET /` goes through `health.controller.js`, so the pattern to copy is always visible.
 - **Dashed, dotted filenames.** `error-handler.js`, `user.model.js`, `health.routes.js`. A dot marks the layer; a dash separates words.
 - **`config/index.js`, not `config.js`.** A `config.js` file sitting next to a `config/` folder is ambiguous to resolve. Environment access lives in `config/index.js`; the database connection lives in `config/db.js`.
@@ -564,6 +637,8 @@ npm run dev
 | `backend` | `npm run lint` | ESLint over the backend |
 | `backend` | `npm run format` | Rewrite files with Prettier |
 | `backend` | `npm run format:check` | Verify formatting, no writes |
+| `backend` | `npm run seed:admin` | Create the first admin or super admin |
+| `backend` | `node scripts/reset-db.mjs` | Wipe all users and profiles — **destroys data** |
 | `frontend` | `npm run dev` | Vite dev server with HMR |
 | `frontend` | `npm run build` | Production build to `dist/` |
 | `frontend` | `npm run preview` | Serve the built output |

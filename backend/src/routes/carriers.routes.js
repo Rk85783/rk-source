@@ -13,18 +13,35 @@ import {
   requireAuth,
   requirePermission,
 } from "../middlewares/auth.middleware.js";
+import { validate } from "../middlewares/validate.middleware.js";
+import { addDriverSchema } from "../validations/profile.validation.js";
+import {
+  createProfileSchema,
+  profileQuerySchema,
+  updateProfileSchema,
+} from "../validations/profile.validation.js";
 
 const router = Router();
 
 router.use(requireAuth);
 
-router.get("/", requirePermission(PERMISSIONS.CARRIER_LIST), list);
+router.get(
+  "/",
+  requirePermission(PERMISSIONS.CARRIER_LIST),
+  validate(profileQuerySchema, "query"),
+  list,
+);
 router.get("/:userId", requirePermission(PERMISSIONS.CARRIER_READ), details);
 
-router.post("/drivers", authorize("carrier"), addDriver);
+router.post(
+  "/drivers",
+  authorize("carrier"),
+  validate(addDriverSchema),
+  addDriver,
+);
 
 router.get("/me", getMyProfile);
-router.post("/me", createMyProfile);
-router.patch("/me", updateMyProfile);
+router.post("/me", validate(createProfileSchema), createMyProfile);
+router.patch("/me", validate(updateProfileSchema), updateMyProfile);
 
 export default router;

@@ -14,6 +14,3 @@ export const PERMISSION_GROUPS = {
 };
 
 export const ALL_PERMISSIONS = Object.values(PERMISSIONS);
-
-export const isValidPermission = (permission) =>
-  ALL_PERMISSIONS.includes(permission);

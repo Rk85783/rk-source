@@ -10,7 +10,7 @@ import shippersRoutes from "./shippers.routes.js";
 const router = Router();
 
 router.get("/", root);
-router.use(healthRoutes);
+router.use("/api", healthRoutes);
 router.use("/api/auth", authRoutes);
 router.use("/api/shippers", shippersRoutes);
 router.use("/api/carriers", carriersRoutes);

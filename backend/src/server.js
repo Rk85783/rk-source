@@ -11,15 +11,17 @@ const assertConfig = () => {
     problems.push("JWT_SECRET must be at least 32 characters");
   }
 
-  if (config.env !== "production" && problems.length) {
+  if (!problems.length) return;
+
+  // In development a weak or missing secret only warns, so the app still runs
+  // for local work. In production it is fatal.
+  if (config.env !== "production") {
     console.warn(`config warning: ${problems.join("; ")}`);
     return;
   }
 
-  if (problems.length) {
-    console.error(`invalid config: ${problems.join("; ")}`);
-    process.exit(1);
-  }
+  console.error(`invalid config: ${problems.join("; ")}`);
+  process.exit(1);
 };
 
 const start = async () => {

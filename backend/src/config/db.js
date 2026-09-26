@@ -1,9 +1,12 @@
 import mongoose from "mongoose";
 import { config } from "./index.js";
 
+// A Mongo URI can embed a username and password, so it is never logged in full.
+const redactUri = (uri) => uri.replace(/\/\/([^@/]+)@/, "//***:***@");
+
 export const connectDB = async () => {
   mongoose.connection.on("connected", () => {
-    console.info(`mongo connected: ${config.mongoUri}`);
+    console.info(`mongo connected: ${redactUri(config.mongoUri)}`);
   });
 
   mongoose.connection.on("error", (err) => {
@@ -18,7 +21,10 @@ export const connectDB = async () => {
     await mongoose.connect(config.mongoUri, { serverSelectionTimeoutMS: 5000 });
     return true;
   } catch (err) {
-    console.error("mongo connection failed:", err.message);
+    console.error(
+      `mongo connection failed (${redactUri(config.mongoUri)}):`,
+      err.message,
+    );
     return false;
   }
 };

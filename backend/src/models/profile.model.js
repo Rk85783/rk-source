@@ -6,7 +6,6 @@ export const profileFields = {
     ref: "User",
     required: true,
     unique: true,
-    index: true,
   },
   firstName: { type: String, required: true, trim: true, maxlength: 60 },
   lastName: { type: String, required: true, trim: true, maxlength: 60 },

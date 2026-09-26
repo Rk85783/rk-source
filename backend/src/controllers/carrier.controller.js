@@ -31,12 +31,12 @@ export const addDriver = async (req, res, next) => {
 
     const driver = await createUser({ name, email, password, role: "driver" });
 
-    const parts = String(name).trim().split(/\s+/);
+    const parts = name.trim().split(/\s+/);
     const profile = await DriverProfile.create({
       user: driver._id,
       firstName: firstName || parts[0],
       lastName: lastName || parts.slice(1).join(" ") || "-",
-      profileImage: profileImage ? String(profileImage).trim() : "",
+      profileImage: profileImage || "",
     });
 
     res.status(201).json({ driver: publicUser(driver), profile });

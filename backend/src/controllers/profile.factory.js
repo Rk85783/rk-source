@@ -24,7 +24,8 @@ const requireRole = (req, role) => {
  * and role-specific fields can be added to a single controller later.
  *
  * The role check is strict and has no bypass: a user may only write to the
- * collection that matches their own role.
+ * collection that matches their own role. Field shapes are already validated
+ * by the route's Zod schema.
  */
 export const profileHandlers = (Model, role) => {
   const get = async (req, res, next) => {
@@ -43,22 +44,15 @@ export const profileHandlers = (Model, role) => {
       requireRole(req, role);
       const { firstName, lastName, profileImage } = req.body;
 
-      if (!firstName || String(firstName).trim().length < 1) {
-        throw new ApiError(400, "firstName is required");
-      }
-      if (!lastName || String(lastName).trim().length < 1) {
-        throw new ApiError(400, "lastName is required");
-      }
-
       if (await Model.findOne({ user: req.user._id })) {
         throw new ApiError(409, "Profile already exists");
       }
 
       const profile = await Model.create({
         user: req.user._id,
-        firstName: String(firstName).trim(),
-        lastName: String(lastName).trim(),
-        profileImage: profileImage ? String(profileImage).trim() : "",
+        firstName,
+        lastName,
+        profileImage: profileImage || "",
       });
 
       res.status(201).json({ profile: publicProfile(profile) });
@@ -75,21 +69,9 @@ export const profileHandlers = (Model, role) => {
       const profile = await Model.findOne({ user: req.user._id });
       if (!profile) throw new ApiError(404, "Profile not found");
 
-      if (firstName !== undefined) {
-        if (String(firstName).trim().length < 1) {
-          throw new ApiError(400, "firstName cannot be empty");
-        }
-        profile.firstName = String(firstName).trim();
-      }
-      if (lastName !== undefined) {
-        if (String(lastName).trim().length < 1) {
-          throw new ApiError(400, "lastName cannot be empty");
-        }
-        profile.lastName = String(lastName).trim();
-      }
-      if (profileImage !== undefined) {
-        profile.profileImage = String(profileImage).trim();
-      }
+      if (firstName !== undefined) profile.firstName = firstName;
+      if (lastName !== undefined) profile.lastName = lastName;
+      if (profileImage !== undefined) profile.profileImage = profileImage;
 
       await profile.save();
       res.json({ profile: publicProfile(profile) });
@@ -103,15 +85,13 @@ export const profileHandlers = (Model, role) => {
 
 /**
  * Builds the administrative list and detail handlers for one role. These are
- * guarded by requirePermission on the route, not here, so each role decides its
- * own required permission.
+ * guarded by requirePermission on the route. Query values arrive on
+ * req.validated, because Express 5 does not allow req.query to be replaced.
  */
 export const profileAdminHandlers = (Model, role, key) => {
   const list = async (req, res, next) => {
     try {
-      const page = Math.max(1, Number(req.query.page) || 1);
-      const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
-      const search = String(req.query.search || "").trim();
+      const { page, limit, search } = req.validated;
 
       const filter = { role };
       if (search) {

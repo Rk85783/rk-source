@@ -31,6 +31,25 @@ bash .opencode/skills/dev-server/devserver.sh verify
 
 Prefer this over starting a server and poking at it across several calls.
 
+## Never run a bare `start`
+
+**Do not run `devserver.sh start` on its own, and never chain it into a longer
+command.** It backgrounds a process that stays attached to the calling shell, so
+the tool call does not return and has to be interrupted by the user. This has
+happened repeatedly.
+
+`start` exists for the user to run in their own terminal. For agent use:
+
+- Need to confirm a server works? → `verify`
+- Need to hit an endpoint repeatedly? → `verify` once to confirm, then use a
+  script that starts, curls, and stops inside a single bash call
+- Need a server up for Playwright? → `verify` first, and if a genuinely
+  long-lived server is unavoidable, say so and keep it to one call
+
+Chaining is what breaks it. `npm run lint && devserver.sh start` hangs even
+though the lint finished, because the whole call waits on the backgrounded
+process.
+
 ## Do not start a server unless the task needs one
 
 Most work needs no server at all. `npm run lint`, `npm run build`,

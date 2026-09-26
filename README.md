@@ -8,16 +8,18 @@ A live, growing document. Decisions, setup steps, and known issues are tracked h
 
 ## Status
 
-Early in development. Auth and per-role profiles are working end to end against a
-real database; the frontend has no auth screens yet.
+Early in development. Auth, permissions, and per-role profiles work end to end
+against a real database, and the frontend has working signup, sign-in, and a
+protected dashboard.
 
 | Part | State |
 | --- | --- |
 | Backend API | Runs. CORS, Mongo connected, health + auth + profile endpoints. |
 | Auth | Live. Signup, login, JWT, five roles, seeded super admin. No rate limiting. |
-| Validation | Zod at every route boundary. |
+| Validation | Zod at every route boundary, backend and frontend. |
+| Permissions | Live. Six permissions, super admin grants them to admins. |
 | Profiles | Live. Four collections, one per role, strict role isolation. |
-| Frontend | Builds. Tailwind active, `Home` shows API status. No auth UI. |
+| Frontend | Signup, sign-in, protected dashboard, sign-out. |
 | Tailwind | Active. Imported in `index.css`, generating a real stylesheet. |
 
 ---
@@ -450,6 +452,69 @@ cannot be invalidated without a blocklist.
 
 ---
 
+## Frontend
+
+React 19 with Vite 8 and Tailwind v4. React Router, axios, and Zod for form
+validation.
+
+### Pages and routes
+
+| Route | Access | What it does |
+| --- | --- | --- |
+| `/` | Public | Landing page, shows live API and database status |
+| `/register` | Public | Signup as `carrier` or `shipper` |
+| `/login` | Public | Sign in |
+| `/dashboard` | Authenticated | Account details, permissions, change password |
+
+### Auth on the client
+
+`AuthProvider` in `src/context/` owns the session. It holds the user in memory
+and the token in `localStorage` under `rk-source.token`.
+
+**A stored token is never trusted on its own.** On load, if a token exists, the
+app calls `GET /api/auth/me` and only treats the session as real if the server
+agrees. A token that has expired or been tampered with is discarded and the user
+lands on `/login`. The same interceptor clears the token on any `401`, so a dead
+token is never replayed on a later request.
+
+Sign-out is client-side only. There is no logout endpoint, because a stateless
+JWT cannot be revoked without a server-side blocklist.
+
+**Token storage caveat.** `localStorage` is readable by any script running on the
+page, so a cross-site scripting bug would leak the token. That is the trade-off
+for not needing a cookie-based session. A stricter deployment should move the
+token to an `httpOnly`, `secure`, `SameSite` cookie.
+
+### Form validation
+
+The same Zod approach as the backend, in `src/lib/schemas.js`. Each form runs
+`safeParse` before it sends anything, so mistakes surface without a round trip.
+The server stays authoritative — client validation is a convenience, not a
+boundary.
+
+`toFieldErrors` turns a Zod result into a field-to-message map, so every form
+reports errors identically.
+
+**Bundle cost:** Zod adds roughly 23 kB gzipped to the frontend bundle
+(about 103 kB to 126 kB total). `zod/mini` would cut most of that, but its error
+messages are generic ("Invalid input"), which is useless for showing a person
+what went wrong. Worth revisiting only if the bundle size starts to matter more
+than the message quality.
+
+`react-hook-form` is deliberately **not** installed. Two forms did not justify
+another dependency, and the schemas here move to it unchanged if the forms grow
+more complex.
+
+### Conventions
+
+- One component per file, named exports for anything a route imports.
+- A file that exports a component exports only components, so React Fast
+  Refresh works. `auth-context.js`, `AuthProvider.jsx`, and `useAuth.js` are
+  split for this reason.
+- `ProtectedRoute` wraps any route that needs a session.
+
+---
+
 ## Tailwind CSS
 
 Tailwind v4, wired through the `@tailwindcss/vite` plugin. There is no
@@ -560,13 +625,24 @@ utility classes stay in a predictable sequence. Registered in
 │   └── seed-admin.mjs     # creates the first admin accounts
 ├── frontend/           # Vite + React client
 │   └── src/
-│       ├── lib/
-│       │   └── api.js          # axios instance
-│       ├── main.jsx            # React root, mounts <App />
-│       ├── App.jsx             # Route table
-│       ├── pages/              # Route-level components
-│       ├── components/         # Shared components
-│       └── index.css           # Global styles
+│       ├── lib/          # Shared, non-visual code
+│       │   ├── api.js    # axios instance, token handling
+│       │   └── schemas.js  # Zod form schemas
+│       ├── context/      # Auth state
+│       │   ├── auth-context.js
+│       │   ├── AuthProvider.jsx
+│       │   └── useAuth.js
+│       ├── components/   # Shared components
+│       │   ├── FormField.jsx
+│       │   └── ProtectedRoute.jsx
+│       ├── pages/        # Route-level components
+│       │   ├── Home.jsx
+│       │   ├── Login.jsx
+│       │   ├── Register.jsx
+│       │   └── Dashboard.jsx
+│       ├── App.jsx       # Route table, wraps AuthProvider
+│       ├── main.jsx      # React root, mounts <App />
+│       └── index.css     # Global styles
 └── opencode.json       # opencode project config
 ```
 

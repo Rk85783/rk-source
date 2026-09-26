@@ -37,8 +37,33 @@ wait_for_port() {
   return 1
 }
 
+# Killing a listener does not release the port instantly. Starting the next
+# process before the port is free races it, and the new process then fails to
+# bind while the health check reports a false negative.
+wait_for_free() {
+  local i=0
+  while [ "$i" -lt 40 ]; do
+    [ -z "$(port_pid "$1")" ] && return 0
+    sleep 0.5
+    i=$(( i + 1 ))
+  done
+  return 1
+}
+
+free_and_start() {
+  local port=$1
+  kill_port "$port"
+  if ! wait_for_free "$port"; then
+    echo "port $port is still held by another process"
+    port_pid "$port" | while read -r pid; do
+      echo "  pid $pid"
+    done
+    return 1
+  fi
+}
+
 start_backend() {
-  kill_port "$BACKEND_PORT"
+  free_and_start "$BACKEND_PORT" || return 1
   ( cd "$ROOT/backend" && nohup node src/server.js >"$LOG_DIR/backend.log" 2>&1 </dev/null & disown )
   if wait_for_port "$BACKEND_PORT" 15; then
     echo "backend:  UP   http://localhost:$BACKEND_PORT   (.devlogs/backend.log)"
@@ -50,9 +75,9 @@ start_backend() {
 }
 
 start_frontend() {
-  kill_port "$FRONTEND_PORT"
+  free_and_start "$FRONTEND_PORT" || return 1
   ( cd "$ROOT/frontend" && nohup npm run dev >"$LOG_DIR/frontend.log" 2>&1 </dev/null & disown )
-  if wait_for_port "$FRONTEND_PORT" 30; then
+  if wait_for_port "$FRONTEND_PORT" 45; then
     echo "frontend: UP   http://localhost:$FRONTEND_PORT   (.devlogs/frontend.log)"
   else
     echo "frontend: FAILED to start"

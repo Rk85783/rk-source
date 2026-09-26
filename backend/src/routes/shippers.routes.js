@@ -1,14 +1,23 @@
 import { Router } from "express";
 import {
   createMyProfile,
+  details,
   getMyProfile,
+  list,
   updateMyProfile,
 } from "../controllers/shipper.controller.js";
-import { requireAuth } from "../middlewares/auth.middleware.js";
+import { PERMISSIONS } from "../config/permissions.js";
+import {
+  requireAuth,
+  requirePermission,
+} from "../middlewares/auth.middleware.js";
 
 const router = Router();
 
 router.use(requireAuth);
+
+router.get("/", requirePermission(PERMISSIONS.SHIPPER_LIST), list);
+router.get("/:userId", requirePermission(PERMISSIONS.SHIPPER_READ), details);
 
 router.get("/me", getMyProfile);
 router.post("/me", createMyProfile);

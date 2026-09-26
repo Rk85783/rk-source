@@ -1,6 +1,11 @@
 import bcrypt from "bcryptjs";
 import { config } from "../config/index.js";
 import { isValidRole, PUBLIC_ROLES, ROLES } from "../config/roles.js";
+import {
+  ALL_PERMISSIONS,
+  isValidPermission,
+  PERMISSION_GROUPS,
+} from "../config/permissions.js";
 import { User } from "../models/user.model.js";
 import { profileModelFor } from "../models/profile.model.js";
 import { publicProfile } from "./profile.factory.js";
@@ -137,6 +142,71 @@ export const updateRole = async (req, res, next) => {
     await target.save();
 
     res.json({ user: publicUser(target) });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const listPermissions = async (req, res) => {
+  res.json({ permissions: PERMISSION_GROUPS, all: ALL_PERMISSIONS });
+};
+
+export const getUserPermissions = async (req, res, next) => {
+  try {
+    const target = await User.findById(req.params.userId);
+    if (!target) throw new ApiError(404, "User not found");
+    if (target.role !== "admin") {
+      throw new ApiError(
+        400,
+        `Permissions are managed for admins, not ${target.role}s`,
+      );
+    }
+
+    res.json({
+      user: {
+        id: target._id.toString(),
+        email: target.email,
+        role: target.role,
+      },
+      permissions: target.permissions,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const setUserPermissions = async (req, res, next) => {
+  try {
+    const { permissions } = req.body;
+    if (!Array.isArray(permissions)) {
+      throw new ApiError(400, "permissions must be an array");
+    }
+
+    const unknown = permissions.filter((p) => !isValidPermission(p));
+    if (unknown.length) {
+      throw new ApiError(400, `Unknown permission: ${unknown.join(", ")}`);
+    }
+
+    const target = await User.findById(req.params.userId);
+    if (!target) throw new ApiError(404, "User not found");
+    if (target.role !== "admin") {
+      throw new ApiError(
+        400,
+        `Permissions are managed for admins, not ${target.role}s`,
+      );
+    }
+
+    target.permissions = [...new Set(permissions)];
+    await target.save();
+
+    res.json({
+      user: {
+        id: target._id.toString(),
+        email: target.email,
+        role: target.role,
+      },
+      permissions: target.permissions,
+    });
   } catch (err) {
     next(err);
   }

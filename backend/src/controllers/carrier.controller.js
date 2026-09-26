@@ -1,12 +1,20 @@
-import { DriverProfile } from "../models/profile.model.js";
+import { CarrierProfile, DriverProfile } from "../models/profile.model.js";
 import { createUser, publicUser } from "../utils/user.js";
-import { profileHandlers } from "./profile.factory.js";
+import { profileAdminHandlers, profileHandlers } from "./profile.factory.js";
 
-const handlers = profileHandlers(DriverProfile, "driver");
+const handlers = profileHandlers(CarrierProfile, "carrier");
+const adminHandlers = profileAdminHandlers(
+  CarrierProfile,
+  "carrier",
+  "carriers",
+);
 
 export const getMyProfile = handlers.get;
 export const createMyProfile = handlers.create;
 export const updateMyProfile = handlers.update;
+
+export const list = adminHandlers.list;
+export const details = adminHandlers.details;
 
 /**
  * A carrier adds a driver. Drivers cannot self-register, so this is the only

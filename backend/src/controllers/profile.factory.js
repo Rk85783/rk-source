@@ -1,4 +1,6 @@
+import { User } from "../models/user.model.js";
 import { ApiError } from "../utils/api-error.js";
+import { publicUser } from "../utils/user.js";
 
 export const publicProfile = (profile) => ({
   id: profile._id.toString(),
@@ -97,4 +99,73 @@ export const profileHandlers = (Model, role) => {
   };
 
   return { get, create, update };
+};
+
+/**
+ * Builds the administrative list and detail handlers for one role. These are
+ * guarded by requirePermission on the route, not here, so each role decides its
+ * own required permission.
+ */
+export const profileAdminHandlers = (Model, role, key) => {
+  const list = async (req, res, next) => {
+    try {
+      const page = Math.max(1, Number(req.query.page) || 1);
+      const limit = Math.min(100, Math.max(1, Number(req.query.limit) || 20));
+      const search = String(req.query.search || "").trim();
+
+      const filter = { role };
+      if (search) {
+        const safe = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        filter.name = { $regex: safe, $options: "i" };
+      }
+
+      const [users, total] = await Promise.all([
+        User.find(filter)
+          .sort({ createdAt: -1 })
+          .skip((page - 1) * limit)
+          .limit(limit),
+        User.countDocuments(filter),
+      ]);
+
+      const profiles = await Model.find({
+        user: { $in: users.map((u) => u._id) },
+      });
+      const byUser = new Map(profiles.map((p) => [p.user.toString(), p]));
+
+      res.json({
+        [key]: users.map((u) => ({
+          ...publicUser(u),
+          profile: byUser.has(u._id.toString())
+            ? publicProfile(byUser.get(u._id.toString()))
+            : null,
+        })),
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  const details = async (req, res, next) => {
+    try {
+      const user = await User.findOne({ _id: req.params.userId, role });
+      if (!user) throw new ApiError(404, `${role} not found`);
+
+      const profile = await Model.findOne({ user: user._id });
+
+      res.json({
+        [key]: {
+          ...publicUser(user),
+          profile: profile ? publicProfile(profile) : null,
+        },
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
+
+  return { list, details };
 };

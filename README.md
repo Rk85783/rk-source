@@ -50,6 +50,80 @@ real database; the frontend has no auth screens yet.
 
 ---
 
+## Permissions
+
+A `super_admin` grants permissions to admins. An admin holds exactly what it was
+granted, and nothing more.
+
+| Permission | Allows |
+| --- | --- |
+| `carrier:list` | `GET /api/carriers` |
+| `carrier:read` | `GET /api/carriers/:userId` |
+| `shipper:list` | `GET /api/shippers` |
+| `shipper:read` | `GET /api/shippers/:userId` |
+| `driver:list` | `GET /api/drivers` |
+| `driver:read` | `GET /api/drivers/:userId` |
+
+Defined in `backend/src/config/permissions.js`, which also exports
+`PERMISSION_GROUPS` for building a UI and `isValidPermission` for validation.
+
+**A `super_admin` holds every permission implicitly.** Nothing is stored on the
+user document for that role — `requirePermission` lets `super_admin` through
+before it ever looks at the list. This means new permissions apply to a super
+admin automatically, with no migration.
+
+**A non-admin never passes a permission check**, even a permission string somehow
+attached to it. Carrier, shipper, and driver tokens get `403` on all six
+endpoints.
+
+### Permission endpoints
+
+All three are `super_admin` only.
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/auth/permissions` | Every permission, grouped |
+| `GET` | `/api/auth/users/:userId/permissions` | What an admin currently holds |
+| `PUT` | `/api/auth/users/:userId/permissions` | Replace an admin's permissions |
+
+`PUT` replaces the whole list, so send the complete set each time. It rejects
+unknown permission names with `400`, and rejects non-admin targets with `400` —
+permissions are only meaningful on admins.
+
+```bash
+# grant an admin the ability to view carriers only
+curl -X PUT http://localhost:4000/api/auth/users/<adminId>/permissions \
+  -H "Authorization: Bearer <super admin token>" \
+  -H 'Content-Type: application/json' \
+  -d '{"permissions":["carrier:list","carrier:read"]}'
+```
+
+An admin cannot change its own permissions, or anyone else's — those routes are
+`super_admin` only.
+
+### List and detail responses
+
+List endpoints support `page`, `limit` (max 100), and `search` (case-insensitive
+match on name), and return pagination metadata:
+
+```json
+{
+  "carriers": [
+    {
+      "id": "...", "name": "...", "email": "...", "role": "carrier",
+      "createdAt": "...",
+      "profile": { "firstName": "...", "lastName": "...", "profileImage": "..." }
+    }
+  ],
+  "page": 1, "limit": 20, "total": 1, "pages": 1
+}
+```
+
+`profile` is `null` when the user has not created one yet. Detail endpoints wrap
+a single user in a single-key object, matching the list shape.
+
+---
+
 ## Access model
 
 | Role | How the account is created | What it can do |
@@ -57,8 +131,8 @@ real database; the frontend has no auth screens yet.
 | `carrier` | Self signup | Own profile, add drivers |
 | `shipper` | Self signup | Own profile |
 | `driver` | Added by a carrier | Own profile |
-| `admin` | Created by `super_admin` | Own profile, list users |
-| `super_admin` | `npm run seed:admin` only | Login, create admins, change roles |
+| `admin` | Created by `super_admin` | Own profile, list users, plus whatever permissions it was granted |
+| `super_admin` | `npm run seed:admin` only | Everything, create admins, grant permissions, change roles |
 
 All five roles can log in.
 
@@ -106,6 +180,9 @@ never be granted over HTTP.
 | `GET` | `/api/auth/me` | Authenticated | Current user |
 | `PATCH` | `/api/auth/me/password` | Authenticated | Change own password |
 | `GET` | `/api/auth/users` | `admin` | List users, filterable by `role` |
+| `GET` | `/api/auth/permissions` | `super_admin` | Every permission, grouped |
+| `GET` | `/api/auth/users/:userId/permissions` | `super_admin` | An admin's permissions |
+| `PUT` | `/api/auth/users/:userId/permissions` | `super_admin` | Replace an admin's permissions |
 | `POST` | `/api/auth/users/admins` | `super_admin` | Create an admin account |
 | `PATCH` | `/api/auth/users/:userId/role` | `super_admin` | Change a user's role |
 
@@ -169,12 +246,22 @@ node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"
 ### Middleware
 
 `backend/src/middlewares/auth.middleware.js` provides `requireAuth` (validates
-the token and loads the user), `authorize(...roles)`, and
-`authorizeAtLeast(minimum)`. To protect a route:
+the token and loads the user), `authorize(...roles)`,
+`authorizeAtLeast(minimum)`, and `requirePermission(...permissions)`. To protect a
+route:
 
 ```js
+// any authenticated user
 router.get("/me", requireAuth, me);
-router.patch("/users/:userId/role", requireAuth, authorize("admin"), updateRole);
+
+// one specific role
+router.post("/drivers", requireAuth, authorize("carrier"), addDriver);
+
+// admin or above
+router.get("/users", requireAuth, authorizeAtLeast("admin"), listUsers);
+
+// a granted permission, or super_admin
+router.get("/", requireAuth, requirePermission(PERMISSIONS.CARRIER_LIST), list);
 ```
 
 ---
@@ -368,6 +455,7 @@ utility classes stay in a predictable sequence. Registered in
 │       ├── config/
 │       │   ├── index.js            # env access, single config object
 │       │   ├── db.js               # Mongoose connection and state helpers
+│       │   ├── permissions.js      # permission names and groups
 │       │   └── roles.js            # role names, levels, permission helpers
 │       ├── controllers/
 │       │   ├── auth.controller.js
@@ -378,7 +466,7 @@ utility classes stay in a predictable sequence. Registered in
 │       │   ├── health.controller.js
 │       │   └── profile.factory.js   # shared profile behaviour
 │       ├── middlewares/
-│       │   ├── auth.middleware.js  # requireAuth, authorize
+│       │   ├── auth.middleware.js  # requireAuth, authorize, requirePermission
 │       │   └── error-handler.js    # 404 + central error handler
 │       ├── models/
 │       │   ├── user.model.js       # Mongoose schema
@@ -393,7 +481,8 @@ utility classes stay in a predictable sequence. Registered in
 │       │   └── shippers.routes.js
 │       ├── utils/
 │       │   ├── api-error.js        # ApiError, for expected failures
-│       │   └── token.js            # JWT sign and verify
+│       │   ├── token.js            # JWT sign and verify
+│       │   └── user.js             # validation, creation, serialisation
 │       ├── app.js                  # middleware wiring
 │       └── server.js               # entry point, connects DB then listens
 ├── backend/scripts/
@@ -611,7 +700,11 @@ MongoDB via Mongoose 8. `MONGO_URI` in `backend/.env` points at a local instance
 | `email` | String | required, unique, lowercased, trimmed, format-checked |
 | `password` | String | required, bcrypt hash, `select: false` |
 | `role` | String | required, one of the five roles, defaults to `carrier` |
+| `permissions` | [String] | enum-validated against `config/permissions.js`, defaults to `[]`. Only meaningful on `admin` |
 | `isActive` | Boolean | defaults to `true`, `select: false` |
+
+A `super_admin` has an empty `permissions` array by design — it bypasses
+permission checks rather than storing every permission.
 
 `timestamps: true`, so `createdAt` and `updatedAt` are maintained automatically.
 
@@ -681,10 +774,10 @@ Rough order of work, not a commitment. Done so far is struck through.
 2. ~~CORS setup for the `/api` boundary~~
 3. ~~Auth — register, login, JWT, roles~~
 4. ~~Per-role profile collections~~
-5. Model the carrier-to-driver relationship, so a carrier can list their drivers
-6. Decide whether `super_admin` gets a profile collection
-7. Rate limiting on the auth routes (`express-rate-limit`)
-8. Token revocation, or accept that logout is client-side only
-9. Decide what `admin` should be able to do beyond logging in
-10. Frontend auth — login and register screens wired to these endpoints
+5. ~~Granular admin permissions~~
+6. Model the carrier-to-driver relationship, so a carrier can list their drivers
+7. Frontend auth — login and register screens, plus an admin permissions screen
+8. Decide whether `super_admin` gets a profile collection
+9. Rate limiting on the auth routes (`express-rate-limit`)
+10. Token revocation, or accept that logout is client-side only
 11. Branding pass (see above)

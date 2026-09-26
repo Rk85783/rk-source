@@ -1,5 +1,6 @@
 import mongoose from "mongoose";
 import { ROLES } from "../config/roles.js";
+import { ALL_PERMISSIONS } from "../config/permissions.js";
 
 const userSchema = new mongoose.Schema(
   {
@@ -20,6 +21,11 @@ const userSchema = new mongoose.Schema(
     },
     password: { type: String, required: true, select: false },
     role: { type: String, enum: ROLES, required: true, default: "carrier" },
+    permissions: {
+      type: [String],
+      enum: ALL_PERMISSIONS,
+      default: [],
+    },
     isActive: { type: Boolean, default: true, select: false },
   },
   { timestamps: true },

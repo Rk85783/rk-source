@@ -54,3 +54,36 @@ export const authorizeAtLeast = (minimum) => {
     next();
   };
 };
+
+/**
+ * Guards a route behind a named permission. A super admin holds every
+ * permission implicitly, so no list is stored for that role. An admin holds
+ * exactly what a super admin granted. Non-admin roles never pass, even if a
+ * permission string is somehow attached to them.
+ *
+ * All listed permissions are required.
+ */
+export const requirePermission = (...permissions) => {
+  return (req, res, next) => {
+    if (!req.user) return next(new ApiError(401, "Authentication required"));
+
+    if (req.user.role === "super_admin") return next();
+
+    if (req.user.role !== "admin") {
+      return next(
+        new ApiError(403, "This endpoint is for administrators only"),
+      );
+    }
+
+    const held = req.user.permissions || [];
+    const missing = permissions.filter((p) => !held.includes(p));
+
+    if (missing.length) {
+      return next(
+        new ApiError(403, `Missing permission: ${missing.join(", ")}`),
+      );
+    }
+
+    next();
+  };
+};

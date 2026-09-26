@@ -2,10 +2,13 @@ import { Router } from "express";
 import {
   changePassword,
   createAdmin,
+  getUserPermissions,
+  listPermissions,
   listUsers,
   login,
   me,
   register,
+  setUserPermissions,
   updateRole,
 } from "../controllers/auth.controller.js";
 import {
@@ -22,6 +25,18 @@ router.get("/me", requireAuth, me);
 router.patch("/me/password", requireAuth, changePassword);
 
 router.get("/users", requireAuth, authorizeAtLeast("admin"), listUsers);
+
+router.get(
+  "/permissions",
+  requireAuth,
+  authorizeAtLeast("super_admin"),
+  listPermissions,
+);
+
+router
+  .route("/users/:userId/permissions")
+  .get(requireAuth, authorizeAtLeast("super_admin"), getUserPermissions)
+  .put(requireAuth, authorizeAtLeast("super_admin"), setUserPermissions);
 
 router.post(
   "/users/admins",

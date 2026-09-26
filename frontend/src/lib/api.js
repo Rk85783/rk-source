@@ -99,3 +99,20 @@ export const getRoleDetail = (role, userId) =>
   api.get(`/api/${role}s/${userId}`);
 
 export { firstError };
+
+export const listConnections = (view = "received") =>
+  api.get("/api/connections", { params: { view } });
+
+export const sendConnection = (toUserId) =>
+  api.post("/api/connections", { toUserId });
+
+export const respondConnection = (id, action) =>
+  api.patch(`/api/connections/${id}`, { action });
+
+export const cancelConnection = (id) =>
+  api.patch(`/api/connections/${id}/cancel`);
+
+export const searchDirectory = (search = "") =>
+  api.get("/api/connections/directory/search", {
+    params: { search: search || undefined, limit: 50 },
+  });

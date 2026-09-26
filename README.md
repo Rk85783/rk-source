@@ -19,6 +19,7 @@ protected dashboard.
 | Validation | Zod at every route boundary, backend and frontend. |
 | Permissions | Live. Six permissions, super admin grants them to admins. |
 | Profiles | Live. Four collections, one per role, strict role isolation. |
+| Network | Live. Shipper/carrier invitations, requests, connections. |
 | Frontend | Signup, sign-in, and a role-aware admin panel with seven sections. |
 | Tailwind | Active. Imported in `index.css`, generating a real stylesheet. |
 
@@ -452,6 +453,81 @@ cannot be invalidated without a blocklist.
 
 ---
 
+---
+
+## Network
+
+Shippers and carriers connect with each other: either side can send an
+invitation, and the other accepts or rejects it. Three views fall out of that —
+requests waiting on you, invitations you sent, and the connections you have.
+
+**Only `shipper` and `carrier` take part.** A driver has no counterpart in this
+flow, and admins manage the platform rather than trading connections, so every
+route answers `403` for them. Frontend sidebar visibility is filtered the same
+way in `src/lib/access.js`.
+
+### Data model
+
+One `connections` collection, not three. A document is one pair of users:
+
+| Field | Notes |
+| --- | --- |
+| `from` | who sent it |
+| `to` | who received it |
+| `pairKey` | both ids, sorted and joined. **Unique** |
+| `status` | `pending`, `accepted`, `rejected`, `cancelled` |
+| `respondedAt` | set when it is accepted, rejected, or cancelled |
+
+`pairKey` is what makes the model safe. Because it is order independent and
+unique, two people can never hold two documents between them whichever way the
+request went. A rejected or cancelled request is **replaced** rather than
+duplicated when someone tries again, so the pair always has exactly one
+current state.
+
+### On the client
+
+`/dashboard/network` has the three views
+
+| Method | Path | Purpose |
+| --- | --- | --- |
+| `GET` | `/api/connections?view=received, sent, connected` | One of the three views, plus counters |
+| `POST` | `/api/connections` | Send an invitation `{ toUserId }` |
+| `PATCH` | `/api/connections/:id` | Respond with `action: accept` or `reject` |
+| `PATCH` | `/api/connections/:id/cancel` | Withdraw an invitation you sent |
+| `GET` | `/api/connections/directory/search?search=` | Find people to invite |
+
+### Rules
+
+| Situation | Result |
+| --- | --- |
+| Connecting with yourself | `400` |
+| Shipper inviting a shipper, or anyone inviting a driver | `400` |
+| Unknown user id | `404` |
+| Inviting someone who already has a live request, in either direction | `409` |
+| Inviting someone already connected | `409` |
+| Responding to a request that was not sent to you | `403` |
+| Responding or cancelling one already answered | `409` |
+| Cancelling an invitation you did not send | `403` |
+
+Only a `pending` request can be answered, and only a `pending` request you sent
+can be cancelled.
+
+### Why a directory endpoint
+
+The admin list endpoints are permission gated, so a shipper or carrier had no
+way to find anyone to invite. `directory/search` is the browse surface for the
+network: the opposite role only, never yourself, and it returns name and role
+but **never an email address**. Each row also carries the current relationship
+(`pending`, `accepted`, `rejected`, `cancelled`, or absent) so the UI can show
+the right action instead of letting someone invite someone they are already
+connected to.
+
+as tabs, with counters in the header, and an invite panel beside them. Accept
+and Reject appear only on requests you received; Cancel only on invitations you
+sent.
+
+---
+
 ## Frontend
 
 React 19 with Vite 8 and Tailwind v4. React Router, axios, and Zod for form
@@ -470,6 +546,7 @@ validation.
 | `/dashboard/shippers` | Holds a shipper permission | List and inspect shipper accounts |
 | `/dashboard/carriers` | Holds a carrier permission | List and inspect carrier accounts |
 | `/dashboard/drivers` | Holds a driver permission | List and inspect driver accounts |
+| `/dashboard/network` | `shipper`, `carrier` | Invitations, requests, connections |
 | `/dashboard/settings` | Any signed-in user | Account details, change password |
 
 ### The sidebar
@@ -482,11 +559,17 @@ initials derived from the name. **A `super_admin` currently has no profile
 collection**, so it always shows initials — see Known gaps below.
 
 **Sections are filtered by what the viewer can actually do**, in
-`src/lib/access.js`. A super admin sees all seven. A regular admin sees Overview,
-User management, Settings, plus only the role sections whose permissions it was
-granted — an admin with only `carrier:list` and `carrier:read` sees Carrier
-management and nothing else. A carrier, shipper, or driver sees Overview and
-Settings only, because the endpoints behind the other sections are admin-only.
+`src/lib/access.js`:
+
+- A **super admin** sees all eight.
+- An **admin** sees Overview, User management, Settings, plus only the role
+  sections whose permissions it was granted. One holding just `carrier:list`
+  and `carrier:read` sees Carrier management and nothing else. Admin
+  management is super-admin-only, since both actions on it are.
+- A **shipper or carrier** sees Overview, Network, and Settings. The management
+  sections are admin-only, and the network is the two-sided feature between
+  shippers and carriers.
+- A **driver** sees Overview and Settings only.
 
 A hidden link is not access control, so `RequireSection` guards the routes as
 well and redirects anyone who types the URL directly. The API refuses the
@@ -648,12 +731,14 @@ utility classes stay in a predictable sequence. Registered in
 │       │   └── validate.middleware.js  # Zod boundary validation
 │       ├── models/
 │       │   ├── user.model.js       # Mongoose schema
-│       │   └── profile.model.js    # four profile collections
+│       │   ├── profile.model.js    # four profile collections
+│       │   └── connection.model.js # shipper <-> carrier links
 │       ├── routes/
 │       │   ├── index.js            # mounts feature routers
 │       │   ├── admins.routes.js
 │       │   ├── auth.routes.js
 │       │   ├── carriers.routes.js
+│       │   ├── connections.routes.js
 │       │   ├── drivers.routes.js
 │       │   ├── health.routes.js
 │       │   └── shippers.routes.js
@@ -663,11 +748,16 @@ utility classes stay in a predictable sequence. Registered in
 │       │   └── user.js             # validation, creation, serialisation
 │       ├── validations/
 │       │   ├── auth.validation.js
+│       │   ├── connection.validation.js
+│       │   ├── directory.validation.js
 │       │   └── profile.validation.js
 │       ├── app.js                  # middleware wiring
 │       └── server.js               # entry point, connects DB then listens
 ├── backend/scripts/
-│   └── seed-admin.mjs     # creates the first admin accounts
+│   ├── seed-admin.mjs       # creates the first admin accounts
+│   ├── make-fixtures.mjs    # test users, prints their ids
+│   ├── reset-db.mjs         # wipes all data
+│   └── verify-password.mjs  # checks a password without a server
 ├── frontend/           # Vite + React client
 │   └── src/
 │       ├── lib/          # Shared, non-visual code
@@ -694,6 +784,7 @@ utility classes stay in a predictable sequence. Registered in
 │       │   ├── UserManagement.jsx
 │       │   ├── AdminManagement.jsx
 │       │   ├── RoleManagement.jsx
+│       │   ├── Network.jsx
 │       │   ├── ShipperManagement.jsx
 │       │   ├── CarrierManagement.jsx
 │       │   ├── DriverManagement.jsx
@@ -987,8 +1078,9 @@ Rough order of work, not a commitment. Done so far is struck through.
 6. Model the carrier-to-driver relationship, so a carrier can list their drivers
 7. ~~Frontend auth — login, register, dashboard~~
 8. ~~Admin panel — sidebar, users, admins, permissions, role management~~
-9. Decide whether `super_admin` gets a profile collection, so its sidebar
-   avatar can show a real image instead of initials
+9. ~~Network — shipper/carrier invitations, requests, connections~~
+10. Decide whether `super_admin` gets a profile collection, so its sidebar
+    avatar can show a real image instead of initials
 9. Rate limiting on the auth routes (`express-rate-limit`)
 10. Token revocation, or accept that logout is client-side only
 11. Branding pass (see above)

@@ -8,6 +8,7 @@ import { CarrierManagement } from "./pages/CarrierManagement";
 import { DriverManagement } from "./pages/DriverManagement";
 import { Home } from "./pages/Home";
 import { Login } from "./pages/Login";
+import { Network } from "./pages/Network";
 import { Overview } from "./pages/Overview";
 import { Register } from "./pages/Register";
 import { Settings } from "./pages/Settings";
@@ -48,6 +49,7 @@ const App = () => (
           path="drivers"
           element={gated("drivers", <DriverManagement />)}
         />
+        <Route path="network" element={gated("network", <Network />)} />
         <Route path="settings" element={<Settings />} />
       </Route>
 

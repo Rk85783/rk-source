@@ -22,6 +22,12 @@ export const canAccess = (user, section) => {
     return user.role === "super_admin" || user.role === "admin";
   }
 
+  // The network is a two-sided feature between shippers and carriers, so those
+  // two roles get it and the rest of the platform does not.
+  if (section === "network") {
+    return user.role === "shipper" || user.role === "carrier";
+  }
+
   const singular = section.replace(/s$/, "");
   const required = PERMISSIONS[singular];
 

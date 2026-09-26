@@ -73,4 +73,29 @@ export const login = (payload) => api.post("/api/auth/login", payload);
 
 export const me = () => api.get("/api/auth/me");
 
+export const listUsers = ({ role, page = 1, limit = 20 } = {}) =>
+  api.get("/api/auth/users", { params: { role, page, limit } });
+
+export const listPermissions = () => api.get("/api/auth/permissions");
+
+export const getUserPermissions = (userId) =>
+  api.get(`/api/auth/users/${userId}/permissions`);
+
+export const setUserPermissions = (userId, permissions) =>
+  api.put(`/api/auth/users/${userId}/permissions`, { permissions });
+
+export const createAdmin = (payload) =>
+  api.post("/api/auth/users/admins", payload);
+
+export const changePassword = (payload) =>
+  api.patch("/api/auth/me/password", payload);
+
+export const listRole = (role, { page = 1, limit = 20, search } = {}) =>
+  api.get(`/api/${role}s`, {
+    params: { page, limit, search: search || undefined },
+  });
+
+export const getRoleDetail = (role, userId) =>
+  api.get(`/api/${role}s/${userId}`);
+
 export { firstError };

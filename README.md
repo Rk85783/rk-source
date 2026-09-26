@@ -19,7 +19,7 @@ protected dashboard.
 | Validation | Zod at every route boundary, backend and frontend. |
 | Permissions | Live. Six permissions, super admin grants them to admins. |
 | Profiles | Live. Four collections, one per role, strict role isolation. |
-| Frontend | Signup, sign-in, protected dashboard, sign-out. |
+| Frontend | Signup, sign-in, and a role-aware admin panel with seven sections. |
 | Tailwind | Active. Imported in `index.css`, generating a real stylesheet. |
 
 ---
@@ -459,12 +459,49 @@ validation.
 
 ### Pages and routes
 
-| Route | Access | What it does |
+| Route | Who can open it | What it does |
 | --- | --- | --- |
-| `/` | Public | Landing page, shows live API and database status |
+| `/` | Public | Landing page, live API and database status |
 | `/register` | Public | Signup as `carrier` or `shipper` |
 | `/login` | Public | Sign in |
-| `/dashboard` | Authenticated | Account details, permissions, change password |
+| `/dashboard` | Any signed-in user | Overview: account, API status, own access |
+| `/dashboard/users` | `admin`, `super_admin` | Every account, filter by role |
+| `/dashboard/admins` | `super_admin` only | Create admins, grant and revoke permissions |
+| `/dashboard/shippers` | Holds a shipper permission | List and inspect shipper accounts |
+| `/dashboard/carriers` | Holds a carrier permission | List and inspect carrier accounts |
+| `/dashboard/drivers` | Holds a driver permission | List and inspect driver accounts |
+| `/dashboard/settings` | Any signed-in user | Account details, change password |
+
+### The sidebar
+
+Everything under `/dashboard` sits inside a fixed sidebar: profile image and
+name at the top, the seven sections, and logout at the bottom.
+
+The avatar uses `profileImage` when the account has one and falls back to
+initials derived from the name. **A `super_admin` currently has no profile
+collection**, so it always shows initials — see Known gaps below.
+
+**Sections are filtered by what the viewer can actually do**, in
+`src/lib/access.js`. A super admin sees all seven. A regular admin sees Overview,
+User management, Settings, plus only the role sections whose permissions it was
+granted — an admin with only `carrier:list` and `carrier:read` sees Carrier
+management and nothing else. A carrier, shipper, or driver sees Overview and
+Settings only, because the endpoints behind the other sections are admin-only.
+
+A hidden link is not access control, so `RequireSection` guards the routes as
+well and redirects anyone who types the URL directly. The API refuses the
+request regardless; this only avoids rendering a page full of failed calls.
+
+### Management pages
+
+Shipper, carrier, and driver management share one `RoleManagement` component
+parameterised by role, because the three endpoints return the same shape. Each
+has search by name, pagination, and a details panel showing the profile and any
+permissions.
+
+Admin management is separate: it lists admins, creates new ones, and opens a
+permission panel grouped by role with select-all and clear. It is
+`super_admin`-only, since creating admins and granting permissions both are.
 
 ### Auth on the client
 
@@ -511,7 +548,15 @@ more complex.
 - A file that exports a component exports only components, so React Fast
   Refresh works. `auth-context.js`, `AuthProvider.jsx`, and `useAuth.js` are
   split for this reason.
-- `ProtectedRoute` wraps any route that needs a session.
+- `usePagedList` owns the fetch, loading, error, and pagination state shared by
+  the three list pages. Its effect only attaches handlers to a promise and
+  never calls setState directly, which is what `react-hooks/set-state-in-effect`
+  requires; the spinner is turned on by the interaction, not by the effect.
+- `canAccess` in `src/lib/access.js` is the single place that decides what a
+  viewer may see. The sidebar and the route guard both use it, so they cannot
+  disagree.
+- `ProtectedRoute` wraps the whole authenticated area. `RequireSection` guards
+  individual sections inside it.
 
 ---
 
@@ -633,13 +678,26 @@ utility classes stay in a predictable sequence. Registered in
 │       │   ├── AuthProvider.jsx
 │       │   └── useAuth.js
 │       ├── components/   # Shared components
+│       │   ├── AdminLayout.jsx    # Sidebar + Outlet
+│       │   ├── Sidebar.jsx
 │       │   ├── FormField.jsx
-│       │   └── ProtectedRoute.jsx
+│       │   ├── ProtectedRoute.jsx
+│       │   ├── RequireSection.jsx
+│       │   └── ui.jsx             # Card, Table bits, Alert, Pagination
+│       ├── hooks/
+│       │   └── usePagedList.js
 │       ├── pages/        # Route-level components
 │       │   ├── Home.jsx
 │       │   ├── Login.jsx
 │       │   ├── Register.jsx
-│       │   └── Dashboard.jsx
+│       │   ├── Overview.jsx
+│       │   ├── UserManagement.jsx
+│       │   ├── AdminManagement.jsx
+│       │   ├── RoleManagement.jsx
+│       │   ├── ShipperManagement.jsx
+│       │   ├── CarrierManagement.jsx
+│       │   ├── DriverManagement.jsx
+│       │   └── Settings.jsx
 │       ├── App.jsx       # Route table, wraps AuthProvider
 │       ├── main.jsx      # React root, mounts <App />
 │       └── index.css     # Global styles
@@ -927,8 +985,10 @@ Rough order of work, not a commitment. Done so far is struck through.
 4. ~~Per-role profile collections~~
 5. ~~Granular admin permissions~~
 6. Model the carrier-to-driver relationship, so a carrier can list their drivers
-7. Frontend auth — login and register screens, plus an admin permissions screen
-8. Decide whether `super_admin` gets a profile collection
+7. ~~Frontend auth — login, register, dashboard~~
+8. ~~Admin panel — sidebar, users, admins, permissions, role management~~
+9. Decide whether `super_admin` gets a profile collection, so its sidebar
+   avatar can show a real image instead of initials
 9. Rate limiting on the auth routes (`express-rate-limit`)
 10. Token revocation, or accept that logout is client-side only
 11. Branding pass (see above)
